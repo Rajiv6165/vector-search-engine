@@ -1,3 +1,4 @@
+
 # Vector Search Engine
 
 A from-scratch implementation of a vector database and Approximate Nearest Neighbor (ANN) search engine. 
@@ -20,3 +21,4 @@ To run the algorithmic correctness and recall tests locally, you need `pytest` a
 pip install -r requirements.txt
 python -m pytest tests/test_hnsw_recall.py -v
 ```
+
