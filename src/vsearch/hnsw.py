@@ -45,6 +45,23 @@ class HNSWIndex:
         # graphs[level][node_id] = set of neighbor node_ids
         self.graphs: List[Dict[int, Set[int]]] = []
 
+    def _batch_distance(self, query: np.ndarray, node_ids: List[int]) -> np.ndarray:
+        if not node_ids:
+            return np.array([])
+        # Use a list comprehension to gather vectors, then stack
+        # This is typically faster than vstack
+        vecs = np.array([self.nodes[n] for n in node_ids])
+        if self.metric == "l2":
+            return np.linalg.norm(vecs - query, axis=1)
+        elif self.metric == "cosine":
+            dots = np.dot(vecs, query)
+            query_norm = np.linalg.norm(query)
+            if query_norm == 0:
+                query_norm = 1.0
+            norms = np.linalg.norm(vecs, axis=1) * query_norm
+            norms[norms == 0] = 1.0
+            return 1.0 - (dots / norms)
+
     def _get_random_level(self) -> int:
         return math.floor(-math.log(random.uniform(0.0, 1.0)) * self.config.m_L)
 
@@ -81,13 +98,16 @@ class HNSWIndex:
             changed = True
             while changed:
                 changed = False
-                neighbors = self.graphs[lc].get(curr_obj, set())
-                for neighbor in neighbors:
-                    d = self.distance_fn(vector, self.nodes[neighbor])
-                    if d < curr_dist:
-                        curr_dist = d
-                        curr_obj = neighbor
-                        changed = True
+                neighbors = list(self.graphs[lc].get(curr_obj, set()))
+                if not neighbors:
+                    continue
+                    
+                dists = self._batch_distance(vector, neighbors)
+                min_idx = np.argmin(dists)
+                if dists[min_idx] < curr_dist:
+                    curr_dist = float(dists[min_idx])
+                    curr_obj = neighbors[min_idx]
+                    changed = True
         
         # Phase 2: From min(max_level, level) down to 0, do ef-based search and connect
         entry_points = [curr_obj]
@@ -148,13 +168,16 @@ class HNSWIndex:
             changed = True
             while changed:
                 changed = False
-                neighbors = self.graphs[lc].get(curr_obj, set())
-                for neighbor in neighbors:
-                    d = self.distance_fn(query, self.nodes[neighbor])
-                    if d < curr_dist:
-                        curr_dist = d
-                        curr_obj = neighbor
-                        changed = True
+                neighbors = list(self.graphs[lc].get(curr_obj, set()))
+                if not neighbors:
+                    continue
+                    
+                dists = self._batch_distance(query, neighbors)
+                min_idx = np.argmin(dists)
+                if dists[min_idx] < curr_dist:
+                    curr_dist = float(dists[min_idx])
+                    curr_obj = neighbors[min_idx]
+                    changed = True
                         
         # Full search at layer 0
         W = self._search_layer(query, [curr_obj], ef, 0)
@@ -197,23 +220,29 @@ class HNSWIndex:
                 
             # Evaluate neighbors of candidate
             neighbors = self.graphs[layer].get(c_id, set())
-            for neighbor in neighbors:
-                if neighbor not in visited:
-                    visited.add(neighbor)
+            unvisited = [n for n in neighbors if n not in visited]
+            if not unvisited:
+                continue
+                
+            for n in unvisited:
+                visited.add(n)
+                
+            dists = self._batch_distance(query, unvisited)
+            
+            for i, neighbor in enumerate(unvisited):
+                f_dist_neg, _ = W[0]
+                f_dist = -f_dist_neg
+                
+                d = float(dists[i])
+                
+                # If W is not full (len < ef) or neighbor is closer than the farthest element in W
+                if len(W) < ef or d < f_dist:
+                    heapq.heappush(C, (d, neighbor))
+                    heapq.heappush(W, (-d, neighbor))
                     
-                    f_dist_neg, f_id = W[0]
-                    f_dist = -f_dist_neg
-                    
-                    d = self.distance_fn(query, self.nodes[neighbor])
-                    
-                    # If W is not full (len < ef) or neighbor is closer than the farthest element in W
-                    if len(W) < ef or d < f_dist:
-                        heapq.heappush(C, (d, neighbor))
-                        heapq.heappush(W, (-d, neighbor))
-                        
-                        # Maintain W size to be at most ef
-                        if len(W) > ef:
-                            heapq.heappop(W)
+                    # Maintain W size to be at most ef
+                    if len(W) > ef:
+                        heapq.heappop(W)
                             
         # Convert W back to a regular list of (node_id, distance)
         return [(n_id, -d_neg) for d_neg, n_id in W]

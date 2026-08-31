@@ -38,7 +38,7 @@ def test_recall():
         
     avg_recall = recall_sum / num_queries
     print(f"Average Recall@{k}: {avg_recall:.4f}")
-    assert avg_recall > 0.85, f"Recall {avg_recall} is below the 85% threshold."
+    assert avg_recall > 0.90, f"Recall {avg_recall} is below the strict 90% threshold."
 
 def test_insert_delete_consistency():
     """Validates graph integrity after deletions."""
