@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
-from vsearch.hnsw import HNSWIndex, HNSWConfig
-from vsearch.brute_force import ExactKNN
+from src.vsearch.hnsw import HNSWIndex, HNSWConfig
+from src.vsearch.brute_force import ExactKNN
 
 def test_recall():
     """Asserts >85% recall against brute-force on random vectors."""
@@ -30,7 +30,7 @@ def test_recall():
         hnsw_results = hnsw.search(q, k=k)
         bf_results = bf.search(q, k=k)
         
-        hnsw_ids = {n_id for n_id, _ in hnsw_results}
+        hnsw_ids = {n_id for n_id, _, _ in hnsw_results}
         bf_ids = {n_id for n_id, _ in bf_results}
         
         intersection = len(hnsw_ids.intersection(bf_ids))
@@ -96,7 +96,7 @@ def test_edge_cases():
     hnsw.insert(2, v_dup)
     res = hnsw.search(v1, k=5)
     # The two closest should be 0 and 2 (both distance 0 from v1)
-    dists = {d for n_id, d in res if n_id in [0, 2]}
+    dists = {d for n_id, d, _ in res if n_id in [0, 2]}
     for d in dists:
         assert np.isclose(d, 0.0, atol=1e-5)
     assert len(res) == 3

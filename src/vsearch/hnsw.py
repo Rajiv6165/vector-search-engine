@@ -58,7 +58,6 @@ class VectorStore:
     def _resize(self, new_capacity: int):
         if self.mmap is not None:
             self.mmap.flush()
-            # close memmap properly if possible, else garbage collection handles it
             if hasattr(self.mmap, '_mmap'):
                 self.mmap._mmap.close()
             del self.mmap
@@ -115,11 +114,17 @@ class WALManager:
         if self.file is None:
             self.file = open(self.filepath, "ab")
 
-    def log_insert(self, node_id: int, vector: np.ndarray):
-        # Format: Opcode(1 byte), NodeID(4 bytes)
-        header = struct.pack('<BI', 1, node_id)
-        vec_bytes = vector.astype(np.float32).tobytes()
-        self.file.write(header + vec_bytes)
+    def log_insert(self, node_id: int, vector: np.ndarray, metadata: dict = None):
+        if metadata:
+            header = struct.pack('<BI', 3, node_id)
+            vec_bytes = vector.astype(np.float32).tobytes()
+            meta_json = json.dumps(metadata).encode('utf-8')
+            meta_len = struct.pack('<I', len(meta_json))
+            self.file.write(header + vec_bytes + meta_len + meta_json)
+        else:
+            header = struct.pack('<BI', 1, node_id)
+            vec_bytes = vector.astype(np.float32).tobytes()
+            self.file.write(header + vec_bytes)
         self.file.flush()
 
     def log_delete(self, node_id: int):
@@ -150,16 +155,26 @@ class WALManager:
                 if not op_buf:
                     break
                 op = struct.unpack('<B', op_buf)[0]
-                if op == 1:
+                if op == 1: # INSERT
                     id_buf = f.read(4)
                     node_id = struct.unpack('<I', id_buf)[0]
                     vec_buf = f.read(bytes_per_vec)
                     vector = np.frombuffer(vec_buf, dtype=np.float32).copy()
-                    insert_fn(node_id, vector)
-                elif op == 2:
+                    insert_fn(node_id, vector, None)
+                elif op == 2: # DELETE
                     id_buf = f.read(4)
                     node_id = struct.unpack('<I', id_buf)[0]
                     delete_fn(node_id)
+                elif op == 3: # INSERT_WITH_METADATA
+                    id_buf = f.read(4)
+                    node_id = struct.unpack('<I', id_buf)[0]
+                    vec_buf = f.read(bytes_per_vec)
+                    vector = np.frombuffer(vec_buf, dtype=np.float32).copy()
+                    meta_len_buf = f.read(4)
+                    meta_len = struct.unpack('<I', meta_len_buf)[0]
+                    meta_json = f.read(meta_len).decode('utf-8')
+                    metadata = json.loads(meta_json)
+                    insert_fn(node_id, vector, metadata)
                 else:
                     raise ValueError(f"Corrupt WAL: unknown op {op}")
 
@@ -178,6 +193,7 @@ class HNSWIndex:
         self.persist_dir = persist_dir
         self.max_level = -1
         self.entry_point = None
+        self.metadata_store: Dict[int, dict] = {}
         
         if self.persist_dir:
             if not os.path.exists(self.persist_dir):
@@ -188,8 +204,6 @@ class HNSWIndex:
             self.nodes: Dict[int, np.ndarray] = {}
             self.wal = None
             
-        # graphs is a list of dicts, one for each level. 
-        # graphs[level][node_id] = set of neighbor node_ids
         self.graphs: List[Dict[int, Set[int]]] = []
 
     def save_snapshot(self, path: str = None):
@@ -201,7 +215,6 @@ class HNSWIndex:
         if not os.path.exists(path):
             os.makedirs(path)
             
-        # Flush vectors if using VectorStore
         if hasattr(self.nodes, "flush"):
             self.nodes.flush()
             
@@ -231,6 +244,9 @@ class HNSWIndex:
         with open(os.path.join(path, "metadata.json"), "w") as f:
             json.dump(metadata, f)
             
+        with open(os.path.join(path, "metadata_store.json"), "w") as f:
+            json.dump(self.metadata_store, f)
+            
         with open(os.path.join(path, "graph.bin"), "wb") as f:
             f.write(struct.pack('<I', len(self.graphs)))
             for level_graph in self.graphs:
@@ -254,6 +270,12 @@ class HNSWIndex:
         idx.max_level = metadata["max_level"]
         idx.entry_point = metadata["entry_point"]
         dim = metadata["dim"]
+        
+        meta_store_path = os.path.join(path, "metadata_store.json")
+        if os.path.exists(meta_store_path):
+            with open(meta_store_path, "r") as f:
+                raw_store = json.load(f)
+                idx.metadata_store = {int(k): v for k, v in raw_store.items()}
         
         if persist_dir and isinstance(idx.nodes, VectorStore) and dim > 0:
             idx.nodes.dim = dim
@@ -285,18 +307,18 @@ class HNSWIndex:
                         
         if idx.wal and dim > 0:
             idx.wal.replay(
-                insert_fn=lambda n, v: idx._replay_insert(n, v),
+                insert_fn=lambda n, v, m: idx._replay_insert(n, v, m),
                 delete_fn=lambda n: idx._replay_delete(n),
                 dim=dim
             )
             
         return idx
 
-    def _replay_insert(self, node_id: int, vector: np.ndarray):
+    def _replay_insert(self, node_id: int, vector: np.ndarray, metadata: dict):
         old_wal = self.wal
         self.wal = None
         try:
-            self.insert(node_id, vector)
+            self.insert(node_id, vector, metadata)
         finally:
             self.wal = old_wal
 
@@ -311,8 +333,6 @@ class HNSWIndex:
     def _batch_distance(self, query: np.ndarray, node_ids: List[int]) -> np.ndarray:
         if not node_ids:
             return np.array([])
-        # Use a list comprehension to gather vectors, then stack
-        # This is typically faster than vstack
         vecs = np.array([self.nodes[n] for n in node_ids])
         if self.metric == "l2":
             return np.linalg.norm(vecs - query, axis=1)
@@ -328,17 +348,16 @@ class HNSWIndex:
     def _get_random_level(self) -> int:
         return math.floor(-math.log(random.uniform(0.0, 1.0)) * self.config.m_L)
 
-    def insert(self, node_id: int, vector: np.ndarray):
-        """
-        Inserts a new vector into the HNSW graph.
-        """
+    def insert(self, node_id: int, vector: np.ndarray, metadata: dict = None):
         if node_id in self.nodes:
             raise ValueError(f"Node {node_id} already exists in the index.")
             
         if self.wal:
-            self.wal.log_insert(node_id, vector)
+            self.wal.log_insert(node_id, vector, metadata)
         
         self.nodes[node_id] = vector
+        if metadata:
+            self.metadata_store[node_id] = metadata
         
         if self.entry_point is None:
             self.entry_point = node_id
@@ -400,14 +419,27 @@ class HNSWIndex:
             self.max_level = level
             self.entry_point = node_id
 
-    def search(self, query: np.ndarray, k: int, ef: int = None) -> List[Tuple[int, float]]:
+    def _matches_filter(self, node_id: int, filter_dict: dict) -> bool:
+        if not filter_dict:
+            return True
+        meta = self.metadata_store.get(node_id, {})
+        for k, v in filter_dict.items():
+            if meta.get(k) != v:
+                return False
+        return True
+
+    def search(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None) -> List[Tuple[int, float, dict]]:
         if self.entry_point is None:
             return []
         
         if ef is None:
             ef = self.config.ef_search
             
-        ef = max(ef, k)
+        if filter_dict:
+            # Increase exploration if we need to post-filter
+            ef = max(ef, k * 5)
+        else:
+            ef = max(ef, k)
             
         curr_obj = self.entry_point
         curr_dist = self.distance_fn(query, self.nodes[curr_obj])
@@ -428,9 +460,17 @@ class HNSWIndex:
                     changed = True
                         
         W = self._search_layer(query, [curr_obj], ef, 0)
-        
         W.sort(key=lambda x: x[1])
-        return W[:k]
+        
+        results = []
+        for n_id, dist in W:
+            if self._matches_filter(n_id, filter_dict):
+                meta = self.metadata_store.get(n_id, {})
+                results.append((n_id, dist, meta))
+                if len(results) == k:
+                    break
+                    
+        return results
 
     def _search_layer(self, query: np.ndarray, entry_points: List[int], ef: int, layer: int) -> List[Tuple[int, float]]:
         visited = set(entry_points)
@@ -486,6 +526,9 @@ class HNSWIndex:
             
         if self.wal:
             self.wal.log_delete(node_id)
+            
+        if node_id in self.metadata_store:
+            del self.metadata_store[node_id]
             
         for lc in range(len(self.graphs)):
             if node_id in self.graphs[lc]:

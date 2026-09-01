@@ -1,3 +1,7 @@
 numpy
 pytest
 hypothesis
+fastapi
+uvicorn
+pydantic
+httpx

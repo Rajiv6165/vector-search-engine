@@ -83,7 +83,7 @@ def test_snapshot_roundtrip_recall():
         original_results = []
         for q in queries:
             res = index.search(q, k=10)
-            original_results.append([node_id for node_id, _ in res])
+            original_results.append([node_id for node_id, _, _ in res])
             
         # Save and close
         index.save_snapshot()
@@ -97,7 +97,7 @@ def test_snapshot_roundtrip_recall():
         reloaded_results = []
         for q in queries:
             res = reloaded.search(q, k=10)
-            reloaded_results.append([node_id for node_id, _ in res])
+            reloaded_results.append([node_id for node_id, _, _ in res])
             
         # Compare
         for orig, reload in zip(original_results, reloaded_results):
