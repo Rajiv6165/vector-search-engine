@@ -7,6 +7,61 @@ import struct
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Set, Callable, Optional
 import numpy as np
+import threading
+
+class RWLock:
+    def __init__(self):
+        self._condition = threading.Condition(threading.Lock())
+        self._readers = 0
+        self._writers = 0
+        self._pending_writers = 0
+        
+    def acquire_read(self):
+        with self._condition:
+            while self._writers > 0 or self._pending_writers > 0:
+                self._condition.wait()
+            self._readers += 1
+            
+    def release_read(self):
+        with self._condition:
+            self._readers -= 1
+            if not self._readers:
+                self._condition.notify_all()
+                
+    def acquire_write(self):
+        with self._condition:
+            self._pending_writers += 1
+            while self._writers > 0 or self._readers > 0:
+                self._condition.wait()
+            self._pending_writers -= 1
+            self._writers += 1
+            
+    def release_write(self):
+        with self._condition:
+            self._writers -= 1
+            self._condition.notify_all()
+
+    class _ReadContext:
+        def __init__(self, lock):
+            self.lock = lock
+        def __enter__(self):
+            self.lock.acquire_read()
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            self.lock.release_read()
+            
+    class _WriteContext:
+        def __init__(self, lock):
+            self.lock = lock
+        def __enter__(self):
+            self.lock.acquire_write()
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            self.lock.release_write()
+            
+    def read(self):
+        return self._ReadContext(self)
+        
+    def write(self):
+        return self._WriteContext(self)
 
 def l2_distance(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.linalg.norm(a - b))
@@ -205,6 +260,8 @@ class HNSWIndex:
             self.wal = None
             
         self.graphs: List[Dict[int, Set[int]]] = []
+        self.lock = RWLock()
+        self.deleted_nodes: Set[int] = set()
 
     def save_snapshot(self, path: str = None):
         if path is None:
@@ -234,7 +291,8 @@ class HNSWIndex:
             "metric": self.metric,
             "max_level": self.max_level,
             "entry_point": self.entry_point,
-            "dim": dim
+            "dim": dim,
+            "deleted_nodes": list(self.deleted_nodes)
         }
         
         if isinstance(self.nodes, VectorStore):
@@ -270,6 +328,7 @@ class HNSWIndex:
         idx.max_level = metadata["max_level"]
         idx.entry_point = metadata["entry_point"]
         dim = metadata["dim"]
+        idx.deleted_nodes = set(metadata.get("deleted_nodes", []))
         
         meta_store_path = os.path.join(path, "metadata_store.json")
         if os.path.exists(meta_store_path):
@@ -349,75 +408,78 @@ class HNSWIndex:
         return math.floor(-math.log(random.uniform(0.0, 1.0)) * self.config.m_L)
 
     def insert(self, node_id: int, vector: np.ndarray, metadata: dict = None):
-        if node_id in self.nodes:
-            raise ValueError(f"Node {node_id} already exists in the index.")
+        with self.lock.write():
+            if node_id in self.nodes and node_id not in self.deleted_nodes:
+                raise ValueError(f"Node {node_id} already exists in the index.")
+                
+            if self.wal:
+                self.wal.log_insert(node_id, vector, metadata)
             
-        if self.wal:
-            self.wal.log_insert(node_id, vector, metadata)
-        
-        self.nodes[node_id] = vector
-        if metadata:
-            self.metadata_store[node_id] = metadata
-        
-        if self.entry_point is None:
-            self.entry_point = node_id
-            self.max_level = self._get_random_level()
-            for _ in range(self.max_level + 1):
-                self.graphs.append({node_id: set()})
-            return
-        
-        level = self._get_random_level()
-        
-        while len(self.graphs) <= level:
-            self.graphs.append({})
+            self.nodes[node_id] = vector
+            if node_id in self.deleted_nodes:
+                self.deleted_nodes.remove(node_id)
+            if metadata:
+                self.metadata_store[node_id] = metadata
             
-        curr_obj = self.entry_point
-        curr_dist = self.distance_fn(vector, self.nodes[curr_obj])
-        
-        for lc in range(self.max_level, level, -1):
-            changed = True
-            while changed:
-                changed = False
-                neighbors = list(self.graphs[lc].get(curr_obj, set()))
-                if not neighbors:
-                    continue
+            if self.entry_point is None:
+                self.entry_point = node_id
+                self.max_level = self._get_random_level()
+                for _ in range(self.max_level + 1):
+                    self.graphs.append({node_id: set()})
+                return
+            
+            level = self._get_random_level()
+            
+            while len(self.graphs) <= level:
+                self.graphs.append({})
+                
+            curr_obj = self.entry_point
+            curr_dist = self.distance_fn(vector, self.nodes[curr_obj])
+            
+            for lc in range(self.max_level, level, -1):
+                changed = True
+                while changed:
+                    changed = False
+                    neighbors = list(self.graphs[lc].get(curr_obj, set()))
+                    if not neighbors:
+                        continue
+                        
+                    dists = self._batch_distance(vector, neighbors)
+                    min_idx = np.argmin(dists)
+                    if dists[min_idx] < curr_dist:
+                        curr_dist = float(dists[min_idx])
+                        curr_obj = neighbors[min_idx]
+                        changed = True
+            
+            entry_points = [curr_obj]
+            for lc in range(min(self.max_level, level), -1, -1):
+                if node_id not in self.graphs[lc]:
+                    self.graphs[lc][node_id] = set()
                     
-                dists = self._batch_distance(vector, neighbors)
-                min_idx = np.argmin(dists)
-                if dists[min_idx] < curr_dist:
-                    curr_dist = float(dists[min_idx])
-                    curr_obj = neighbors[min_idx]
-                    changed = True
-        
-        entry_points = [curr_obj]
-        for lc in range(min(self.max_level, level), -1, -1):
-            if node_id not in self.graphs[lc]:
-                self.graphs[lc][node_id] = set()
+                W = self._search_layer(vector, entry_points, self.config.ef_construction, lc)
                 
-            W = self._search_layer(vector, entry_points, self.config.ef_construction, lc)
-            
-            M_max = self.config.M if lc > 0 else self.config.M * 2
-            neighbors = self._select_neighbors(W, self.config.M)
-            
-            for n_id, n_dist in neighbors:
-                self.graphs[lc][node_id].add(n_id)
-                if n_id not in self.graphs[lc]:
-                    self.graphs[lc][n_id] = set()
-                self.graphs[lc][n_id].add(node_id)
+                M_max = self.config.M if lc > 0 else self.config.M * 2
+                neighbors = self._select_neighbors(W, self.config.M)
                 
-                if len(self.graphs[lc][n_id]) > M_max:
-                    n_neighbors = [(v, self.distance_fn(self.nodes[n_id], self.nodes[v])) 
-                                   for v in self.graphs[lc][n_id]]
-                    n_neighbors_pruned = self._select_neighbors(n_neighbors, M_max)
-                    self.graphs[lc][n_id] = {v for v, _ in n_neighbors_pruned}
-            
-            entry_points = [n_id for n_id, _ in W]
+                for n_id, n_dist in neighbors:
+                    self.graphs[lc][node_id].add(n_id)
+                    if n_id not in self.graphs[lc]:
+                        self.graphs[lc][n_id] = set()
+                    self.graphs[lc][n_id].add(node_id)
+                    
+                    if len(self.graphs[lc][n_id]) > M_max:
+                        n_neighbors = [(v, self.distance_fn(self.nodes[n_id], self.nodes[v])) 
+                                       for v in self.graphs[lc][n_id]]
+                        n_neighbors_pruned = self._select_neighbors(n_neighbors, M_max)
+                        self.graphs[lc][n_id] = {v for v, _ in n_neighbors_pruned}
+                
+                entry_points = [n_id for n_id, _ in W]
 
-        if level > self.max_level:
-            for lc in range(self.max_level + 1, level + 1):
-                self.graphs[lc][node_id] = set()
-            self.max_level = level
-            self.entry_point = node_id
+            if level > self.max_level:
+                for lc in range(self.max_level + 1, level + 1):
+                    self.graphs[lc][node_id] = set()
+                self.max_level = level
+                self.entry_point = node_id
 
     def _matches_filter(self, node_id: int, filter_dict: dict) -> bool:
         if not filter_dict:
@@ -429,48 +491,51 @@ class HNSWIndex:
         return True
 
     def search(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None) -> List[Tuple[int, float, dict]]:
-        if self.entry_point is None:
-            return []
-        
-        if ef is None:
-            ef = self.config.ef_search
+        with self.lock.read():
+            if self.entry_point is None:
+                return []
             
-        if filter_dict:
-            # Increase exploration if we need to post-filter
-            ef = max(ef, k * 5)
-        else:
-            ef = max(ef, k)
+            if ef is None:
+                ef = self.config.ef_search
+                
+            if filter_dict or self.deleted_nodes:
+                # Increase exploration if we need to post-filter
+                ef = max(ef, k * 5)
+            else:
+                ef = max(ef, k)
+                
+            curr_obj = self.entry_point
+            curr_dist = self.distance_fn(query, self.nodes[curr_obj])
             
-        curr_obj = self.entry_point
-        curr_dist = self.distance_fn(query, self.nodes[curr_obj])
-        
-        for lc in range(self.max_level, 0, -1):
-            changed = True
-            while changed:
-                changed = False
-                neighbors = list(self.graphs[lc].get(curr_obj, set()))
-                if not neighbors:
-                    continue
-                    
-                dists = self._batch_distance(query, neighbors)
-                min_idx = np.argmin(dists)
-                if dists[min_idx] < curr_dist:
-                    curr_dist = float(dists[min_idx])
-                    curr_obj = neighbors[min_idx]
-                    changed = True
+            for lc in range(self.max_level, 0, -1):
+                changed = True
+                while changed:
+                    changed = False
+                    neighbors = list(self.graphs[lc].get(curr_obj, set()))
+                    if not neighbors:
+                        continue
                         
-        W = self._search_layer(query, [curr_obj], ef, 0)
-        W.sort(key=lambda x: x[1])
-        
-        results = []
-        for n_id, dist in W:
-            if self._matches_filter(n_id, filter_dict):
-                meta = self.metadata_store.get(n_id, {})
-                results.append((n_id, dist, meta))
-                if len(results) == k:
-                    break
-                    
-        return results
+                    dists = self._batch_distance(query, neighbors)
+                    min_idx = np.argmin(dists)
+                    if dists[min_idx] < curr_dist:
+                        curr_dist = float(dists[min_idx])
+                        curr_obj = neighbors[min_idx]
+                        changed = True
+                            
+            W = self._search_layer(query, [curr_obj], ef, 0)
+            W.sort(key=lambda x: x[1])
+            
+            results = []
+            for n_id, dist in W:
+                if n_id in self.deleted_nodes:
+                    continue
+                if self._matches_filter(n_id, filter_dict):
+                    meta = self.metadata_store.get(n_id, {})
+                    results.append((n_id, dist, meta))
+                    if len(results) == k:
+                        break
+                        
+            return results
 
     def _search_layer(self, query: np.ndarray, entry_points: List[int], ef: int, layer: int) -> List[Tuple[int, float]]:
         visited = set(entry_points)
@@ -521,53 +586,16 @@ class HNSWIndex:
         return candidates_sorted[:M]
 
     def delete(self, node_id: int):
-        if node_id not in self.nodes:
-            return
-            
-        if self.wal:
-            self.wal.log_delete(node_id)
-            
-        if node_id in self.metadata_store:
-            del self.metadata_store[node_id]
-            
-        for lc in range(len(self.graphs)):
-            if node_id in self.graphs[lc]:
-                neighbors = list(self.graphs[lc][node_id])
+        with self.lock.write():
+            if node_id not in self.nodes or node_id in self.deleted_nodes:
+                return
                 
-                for other_node, other_neighbors in self.graphs[lc].items():
-                    if node_id in other_neighbors:
-                        other_neighbors.remove(node_id)
+            if self.wal:
+                self.wal.log_delete(node_id)
                 
-                del self.graphs[lc][node_id]
+            if node_id in self.metadata_store:
+                del self.metadata_store[node_id]
                 
-                M_max = self.config.M if lc > 0 else self.config.M * 2
-                for n_id in neighbors:
-                    current_connections = list(self.graphs[lc][n_id])
-                    candidates = [(v, self.distance_fn(self.nodes[n_id], self.nodes[v])) 
-                                  for v in current_connections]
-                    
-                    for other_n in neighbors:
-                        if other_n != n_id and other_n not in current_connections:
-                            candidates.append((other_n, self.distance_fn(self.nodes[n_id], self.nodes[other_n])))
-                            
-                    pruned = self._select_neighbors(candidates, M_max)
-                    self.graphs[lc][n_id] = {v for v, _ in pruned}
-
-        if self.entry_point == node_id:
-            new_entry_point = None
-            for lc in range(self.max_level, -1, -1):
-                if len(self.graphs[lc]) > 0:
-                    new_entry_point = next(iter(self.graphs[lc].keys()))
-                    self.max_level = lc
-                    break
-            self.entry_point = new_entry_point
-            
-            if new_entry_point is None:
-                self.max_level = -1
-                self.graphs = []
-                
-        while len(self.graphs) > 0 and len(self.graphs[-1]) == 0:
-            self.graphs.pop()
-            self.max_level -= 1
-            
-        del self.nodes[node_id]
+            # Tombstone deletion: we don't physically remove from self.nodes or self.graphs
+            # We just mark it as deleted so search() skips it.
+            self.deleted_nodes.add(node_id)

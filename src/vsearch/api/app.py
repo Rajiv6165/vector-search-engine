@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Vector Search Engine", lifespan=lifespan)
 
 @app.post("/vectors", response_model=InsertResponse)
-async def insert_vector(req: InsertRequest):
+def insert_vector(req: InsertRequest):
     if index is None:
         raise HTTPException(status_code=500, detail="Index not initialized")
         
@@ -81,7 +81,7 @@ async def insert_vector(req: InsertRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.delete("/vectors/{node_id}")
-async def delete_vector(node_id: int):
+def delete_vector(node_id: int):
     if index is None:
         raise HTTPException(status_code=500, detail="Index not initialized")
         
@@ -92,7 +92,7 @@ async def delete_vector(node_id: int):
     return {"status": "deleted", "node_id": node_id}
 
 @app.post("/search", response_model=SearchResponse)
-async def search_vectors(req: SearchRequest):
+def search_vectors(req: SearchRequest):
     if index is None:
         raise HTTPException(status_code=500, detail="Index not initialized")
         
@@ -113,7 +113,7 @@ async def search_vectors(req: SearchRequest):
     return SearchResponse(results=formatted)
 
 @app.get("/stats", response_model=StatsResponse)
-async def get_stats():
+def get_stats():
     if index is None:
         raise HTTPException(status_code=500, detail="Index not initialized")
         

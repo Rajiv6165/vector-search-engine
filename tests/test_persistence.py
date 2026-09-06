@@ -45,9 +45,9 @@ def test_crash_recovery_wal():
         recovered_index = HNSWIndex.load_snapshot(path=temp_dir, persist_dir=temp_dir)
         
         # 3. Verify consistency
-        assert len(recovered_index.nodes.node_id_to_index) == len(base_vectors)
+        assert len(recovered_index.nodes.node_id_to_index) - len(recovered_index.deleted_nodes) == len(base_vectors)
         for node_id, original_vec in base_vectors.items():
-            assert node_id in recovered_index.nodes
+            assert node_id in recovered_index.nodes and node_id not in recovered_index.deleted_nodes
             recovered_vec = recovered_index.nodes[node_id]
             np.testing.assert_array_almost_equal(original_vec, recovered_vec)
             
