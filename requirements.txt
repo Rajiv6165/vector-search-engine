@@ -5,3 +5,6 @@ fastapi
 uvicorn
 pydantic
 httpx
+faiss-cpu
+matplotlib
+requests

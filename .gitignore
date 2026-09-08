@@ -218,3 +218,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Benchmarks data
+benchmarks/data/
+*.fvecs
+*.bvecs
+*.tar.gz
+*.npy

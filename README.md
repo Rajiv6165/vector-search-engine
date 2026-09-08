@@ -22,3 +22,12 @@ pip install -r requirements.txt
 python -m pytest tests/test_hnsw_recall.py -v
 ```
 
+## Benchmarks (Phase 6)
+We perform rigorous, honest benchmarking of our custom `vsearch.HNSWIndex` against Meta's `faiss.IndexHNSWFlat` on the standard SIFT1M dataset (100K subset, 128 dimensions).
+
+**Summary vs FAISS (at efSearch=100)**:
+- **Index Build Time**: ~15.4 minutes (Ours) vs ~3 seconds (FAISS)
+- **Recall@100**: 85.75% (Ours) vs 96.05% (FAISS)
+- **QPS**: 276 (Ours) vs 3,809 (FAISS)
+
+For a detailed analysis on *why* FAISS is faster (C++, SIMD, memory-only) and the *tradeoffs* we explicitly chose (Disk-backed WAL durability, metadata filtering, concurrency), read the full [Phase 6 Benchmarks Report](PHASE6_BENCHMARKS.md).
