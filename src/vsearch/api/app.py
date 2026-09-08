@@ -1,10 +1,14 @@
 import os
 import asyncio
 import numpy as np
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import ValidationError
 from typing import Optional
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger("vsearch.api")
 
 from src.vsearch.hnsw import HNSWIndex, HNSWConfig, VectorStore
 from src.vsearch.api.models import InsertRequest, InsertResponse, SearchRequest, SearchResponse, SearchResult, StatsResponse
@@ -20,22 +24,22 @@ async def snapshot_loop():
     while True:
         await asyncio.sleep(SNAPSHOT_INTERVAL_SECONDS)
         if index is not None:
-            print("Running periodic background snapshot...")
+            logger.info("Running periodic background snapshot...")
             index.save_snapshot()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global index
-    print(f"Starting vsearch service. Persist dir: {PERSIST_DIR}")
+    logger.info(f"Starting vsearch service. Persist dir: {PERSIST_DIR}")
     
     # Initialize or load index
     metadata_path = os.path.join(PERSIST_DIR, "metadata.json")
     if os.path.exists(metadata_path):
-        print("Found existing snapshot, loading...")
+        logger.info("Found existing snapshot, loading...")
         index = HNSWIndex.load_snapshot(path=PERSIST_DIR, persist_dir=PERSIST_DIR)
-        print("Snapshot and WAL loaded.")
+        logger.info("Snapshot and WAL loaded.")
     else:
-        print("No existing snapshot found, initializing empty index.")
+        logger.info("No existing snapshot found, initializing empty index.")
         config = HNSWConfig(M=16, ef_construction=100, ef_search=50)
         index = HNSWIndex(config=config, persist_dir=PERSIST_DIR)
         
@@ -44,16 +48,16 @@ async def lifespan(app: FastAPI):
     
     yield  # Run application
     
-    print("Shutting down vsearch service...")
+    logger.info("Shutting down vsearch service...")
     task.cancel()
     if index is not None:
-        print("Saving final snapshot...")
+        logger.info("Saving final snapshot...")
         index.save_snapshot()
         if hasattr(index.nodes, "close"):
             index.nodes.close()
         if index.wal:
             index.wal.close()
-        print("Shutdown complete.")
+        logger.info("Shutdown complete.")
 
 app = FastAPI(title="Vector Search Engine", lifespan=lifespan)
 

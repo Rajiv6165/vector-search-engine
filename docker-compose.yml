@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./vsearch_data:/app/vsearch_data
+    environment:
+      - VSEARCH_PERSIST_DIR=/app/vsearch_data
+      - VSEARCH_SNAPSHOT_INTERVAL=300
+    restart: unless-stopped
