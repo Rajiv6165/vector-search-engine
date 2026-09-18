@@ -8,6 +8,7 @@ A fully-featured, production-ready vector database and Approximate Nearest Neigh
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)
 ![NumPy](https://img.shields.io/badge/NumPy-1.24+-lightblue.svg)
 ![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)
+![CI](https://github.com/Rajiv6165/vector-search-engine/actions/workflows/test.yml/badge.svg)
 
 ## Features (Scannable in 10s)
 *   **From-Scratch HNSW Core**: Custom Python implementation of the Malkov & Yashunin (2016) algorithm with probabilistic layer assignment and greedy best-first search heuristics.

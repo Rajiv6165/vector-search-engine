@@ -11,6 +11,10 @@ Phase 4 introduces a fully functional REST API over the core `HNSWIndex`, effect
 
 ## REST Endpoints
 
+### Authentication
+All modifying endpoints (`POST /vectors`, `DELETE /vectors/{node_id}`, `POST /search`) require API key authentication if the `VSEARCH_API_KEY` environment variable is set.
+Pass the key in the `X-API-Key` HTTP header. If the environment variable is not set, the API remains open (useful for local development).
+
 ### 1. `POST /vectors`
 Insert a new vector with an optional metadata dictionary.
 

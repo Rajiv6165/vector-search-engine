@@ -3,7 +3,8 @@ import asyncio
 import numpy as np
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Security, Depends
+from fastapi.security import APIKeyHeader
 from pydantic import ValidationError
 from typing import Optional
 
@@ -15,6 +16,15 @@ from src.vsearch.api.models import InsertRequest, InsertResponse, SearchRequest,
 
 PERSIST_DIR = os.getenv("VSEARCH_PERSIST_DIR", "./vsearch_data")
 SNAPSHOT_INTERVAL_SECONDS = int(os.getenv("VSEARCH_SNAPSHOT_INTERVAL", "300"))
+VSEARCH_API_KEY = os.getenv("VSEARCH_API_KEY")
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+def verify_api_key(api_key_header: str = Security(api_key_header)):
+    if VSEARCH_API_KEY:
+        if api_key_header != VSEARCH_API_KEY:
+            raise HTTPException(status_code=401, detail="Invalid or missing API Key")
+    return api_key_header
 
 # Global index instance
 index: Optional[HNSWIndex] = None
@@ -62,7 +72,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Vector Search Engine", lifespan=lifespan)
 
 @app.post("/vectors", response_model=InsertResponse)
-def insert_vector(req: InsertRequest):
+def insert_vector(req: InsertRequest, api_key: str = Depends(verify_api_key)):
     if index is None:
         raise HTTPException(status_code=500, detail="Index not initialized")
         
@@ -85,7 +95,7 @@ def insert_vector(req: InsertRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.delete("/vectors/{node_id}")
-def delete_vector(node_id: int):
+def delete_vector(node_id: int, api_key: str = Depends(verify_api_key)):
     if index is None:
         raise HTTPException(status_code=500, detail="Index not initialized")
         
@@ -96,7 +106,7 @@ def delete_vector(node_id: int):
     return {"status": "deleted", "node_id": node_id}
 
 @app.post("/search", response_model=SearchResponse)
-def search_vectors(req: SearchRequest):
+def search_vectors(req: SearchRequest, api_key: str = Depends(verify_api_key)):
     if index is None:
         raise HTTPException(status_code=500, detail="Index not initialized")
         

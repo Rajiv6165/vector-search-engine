@@ -80,6 +80,7 @@ class HNSWConfig:
     ef_construction: int = 100
     ef_search: int = 50
     m_L: float = None  # Normalization factor for level generation
+    wal_batch_size: int = 100 # Flush WAL after this many writes to reduce fsync overhead
 
     def __post_init__(self):
         if self.m_L is None:
@@ -160,9 +161,11 @@ class VectorStore:
 
 
 class WALManager:
-    def __init__(self, filepath: str):
+    def __init__(self, filepath: str, batch_size: int = 100):
         self.filepath = filepath
         self.file = None
+        self.batch_size = batch_size
+        self.writes_since_flush = 0
         self._open()
 
     def _open(self):
@@ -180,12 +183,23 @@ class WALManager:
             header = struct.pack('<BI', 1, node_id)
             vec_bytes = vector.astype(np.float32).tobytes()
             self.file.write(header + vec_bytes)
-        self.file.flush()
+        self.writes_since_flush += 1
+        if self.writes_since_flush >= self.batch_size:
+            self.flush()
 
     def log_delete(self, node_id: int):
         header = struct.pack('<BI', 2, node_id)
         self.file.write(header)
-        self.file.flush()
+        self.writes_since_flush += 1
+        if self.writes_since_flush >= self.batch_size:
+            self.flush()
+
+    def flush(self):
+        if self.file:
+            self.file.flush()
+            if hasattr(os, 'fsync'):
+                os.fsync(self.file.fileno())
+        self.writes_since_flush = 0
 
     def truncate(self):
         if self.file:
@@ -254,7 +268,7 @@ class HNSWIndex:
             if not os.path.exists(self.persist_dir):
                 os.makedirs(self.persist_dir)
             self.nodes = VectorStore(os.path.join(self.persist_dir, "vectors.bin"))
-            self.wal = WALManager(os.path.join(self.persist_dir, "wal.log"))
+            self.wal = WALManager(os.path.join(self.persist_dir, "wal.log"), batch_size=self.config.wal_batch_size)
         else:
             self.nodes: Dict[int, np.ndarray] = {}
             self.wal = None
@@ -599,3 +613,61 @@ class HNSWIndex:
             # Tombstone deletion: we don't physically remove from self.nodes or self.graphs
             # We just mark it as deleted so search() skips it.
             self.deleted_nodes.add(node_id)
+
+    def compact(self):
+        """
+        Physically removes tombstoned (deleted) vectors from the memmapped store, 
+        rebuilds affected graph regions, and reclaims disk space.
+        """
+        with self.lock.write():
+            if not self.deleted_nodes:
+                return
+
+            if isinstance(self.nodes, VectorStore):
+                # Create a new, compacted VectorStore
+                new_filepath = self.nodes.filepath + ".compact"
+                new_store = VectorStore(new_filepath, dtype=self.nodes.dtype, initial_capacity=self.nodes.capacity)
+                new_store._init_memmap(self.nodes.dim)
+                
+                # Copy active nodes
+                for node_id, idx in self.nodes.node_id_to_index.items():
+                    if node_id not in self.deleted_nodes:
+                        new_store[node_id] = self.nodes.mmap[idx]
+                        
+                self.nodes.close()
+                new_store.close()
+                if os.path.exists(self.nodes.filepath):
+                    os.remove(self.nodes.filepath)
+                os.rename(new_filepath, self.nodes.filepath)
+                new_store.filepath = self.nodes.filepath
+                new_store._init_memmap(self.nodes.dim)
+                self.nodes = new_store
+            else:
+                for node_id in self.deleted_nodes:
+                    if node_id in self.nodes:
+                        del self.nodes[node_id]
+
+            # Heal graph by removing deleted nodes
+            for lc in range(len(self.graphs)):
+                for del_id in self.deleted_nodes:
+                    if del_id in self.graphs[lc]:
+                        del self.graphs[lc][del_id]
+                
+                for node_id, edges in self.graphs[lc].items():
+                    self.graphs[lc][node_id] = {e for e in edges if e not in self.deleted_nodes}
+
+            # Update entry_point if the current one was deleted
+            if self.entry_point in self.deleted_nodes:
+                new_ep = None
+                for lc in range(self.max_level, -1, -1):
+                    valid_nodes = [n for n in self.graphs[lc] if n not in self.deleted_nodes]
+                    if valid_nodes:
+                        new_ep = valid_nodes[0]
+                        self.max_level = lc
+                        break
+                self.entry_point = new_ep
+
+            self.deleted_nodes.clear()
+
+            if self.wal:
+                self.wal.truncate()
