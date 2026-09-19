@@ -4,7 +4,7 @@ import random
 import numpy as np
 import pytest
 
-from src.vsearch.hnsw import HNSWIndex, HNSWConfig
+from vsearch.hnsw import HNSWIndex, HNSWConfig
 
 def test_concurrency_mixed_workload(tmp_path):
     config = HNSWConfig(M=16, ef_construction=50, ef_search=50)

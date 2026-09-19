@@ -3,7 +3,7 @@ import shutil
 import tempfile
 import numpy as np
 import pytest
-from src.vsearch.hnsw import HNSWIndex, HNSWConfig
+from vsearch.hnsw import HNSWIndex, HNSWConfig
 
 def test_compaction():
     temp_dir = tempfile.mkdtemp()

@@ -11,8 +11,8 @@ from typing import Optional
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("vsearch.api")
 
-from src.vsearch.hnsw import HNSWIndex, HNSWConfig, VectorStore
-from src.vsearch.api.models import InsertRequest, InsertResponse, SearchRequest, SearchResponse, SearchResult, StatsResponse
+from vsearch.hnsw import HNSWIndex, HNSWConfig, VectorStore
+from vsearch.api.models import InsertRequest, InsertResponse, SearchRequest, SearchResponse, SearchResult, StatsResponse
 
 PERSIST_DIR = os.getenv("VSEARCH_PERSIST_DIR", "./vsearch_data")
 SNAPSHOT_INTERVAL_SECONDS = int(os.getenv("VSEARCH_SNAPSHOT_INTERVAL", "300"))

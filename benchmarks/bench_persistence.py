@@ -3,7 +3,7 @@ import time
 import shutil
 import tempfile
 import numpy as np
-from src.vsearch.hnsw import HNSWIndex, HNSWConfig
+from vsearch.hnsw import HNSWIndex, HNSWConfig
 
 def benchmark_persistence():
     np.random.seed(42)

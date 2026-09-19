@@ -6,7 +6,6 @@ import faiss
 import matplotlib.pyplot as plt
 from typing import Tuple, List
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 from vsearch.hnsw import HNSWIndex, HNSWConfig
 
 from download_dataset import read_fvecs

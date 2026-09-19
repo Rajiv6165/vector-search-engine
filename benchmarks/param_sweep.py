@@ -3,9 +3,6 @@ import numpy as np
 import os
 import sys
 
-# Add src to path
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
-
 from vsearch.hnsw import HNSWIndex, HNSWConfig
 from vsearch.brute_force import ExactKNN
 

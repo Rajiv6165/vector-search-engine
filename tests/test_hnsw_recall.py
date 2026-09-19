@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
-from src.vsearch.hnsw import HNSWIndex, HNSWConfig
-from src.vsearch.brute_force import ExactKNN
+from vsearch.hnsw import HNSWIndex, HNSWConfig
+from vsearch.brute_force import ExactKNN
 
 def test_recall():
     """Asserts >85% recall against brute-force on random vectors."""

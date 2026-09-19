@@ -33,3 +33,8 @@ Phase 8 was entirely dedicated to closing the gap between the project's document
   3. Iterates through the entire HNSW graph, removing deleted nodes from all adjacency lists, healing the graph.
   4. Truncates the WAL, as all current state is now durably compacted.
 * **Verification:** Added `tests/test_compaction.py` to guarantee that file sizes shrink, deleted nodes are cleared, and recall remains intact for the remaining vectors.
+
+### 7. CI Packaging and Import Paths
+* **The Problem:** The GitHub Actions CI workflow failed because `vsearch` was not a properly installable package. Tests and benchmarks were relying on local `sys.path.insert()` hacks or implicitly resolving `src.vsearch`, which failed on a clean runner.
+* **The Solution:** Added a `pyproject.toml` using `setuptools` to make `vsearch` installable. Replaced all `from src.vsearch...` with `from vsearch...` and removed `sys.path.insert()` hacks. Updated `.github/workflows/test.yml` to run `pip install -e .` before testing.
+* **The Lesson:** Relying on `PYTHONPATH` manipulation or relative paths for imports breaks continuous integration and makes a project difficult for others to consume. Defining a project as an installable package from day one avoids "works on my machine" failures.

@@ -4,7 +4,7 @@ import numpy as np
 import tempfile
 import shutil
 
-from src.vsearch.hnsw import HNSWIndex, HNSWConfig
+from vsearch.hnsw import HNSWIndex, HNSWConfig
 
 def benchmark_read_throughput(num_readers: int, index: HNSWIndex, dim: int, queries_per_thread: int = 100):
     start_time = time.time()

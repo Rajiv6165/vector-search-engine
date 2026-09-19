@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 def run_api_tests():
     temp_dir = tempfile.mkdtemp()
     os.environ["VSEARCH_PERSIST_DIR"] = temp_dir
-    import src.vsearch.api.app as api_app
+    import vsearch.api.app as api_app
     api_app.PERSIST_DIR = temp_dir
     
     app = api_app.app
