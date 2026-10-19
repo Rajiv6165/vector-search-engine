@@ -392,6 +392,7 @@ class HNSWIndex:
         self.layer_degrees: List[np.ndarray] = []
         self.lock = RWLock()
         self.deleted_nodes: Set[int] = set()
+        self.last_visited_count: int = 0
 
     def _ensure_graph_capacity(self, level: int):
         while len(self.graphs) <= level:
@@ -736,17 +737,14 @@ class HNSWIndex:
                 return False
         return True
 
-    def _search_unlocked(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None) -> List[Tuple[int, float, dict]]:
+    def _search_unlocked(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None, return_visited: bool = False):
         if self.entry_point is None:
-            return []
+            return ([], 0) if return_visited else []
         
         if ef is None:
             ef = self.config.ef_search
             
-        if filter_dict or self.deleted_nodes:
-            ef = max(ef, k * 5)
-        else:
-            ef = max(ef, k)
+        ef = max(ef, k)
             
         query_c = np.ascontiguousarray(query, dtype=np.float32)
         curr_obj = self.entry_point
@@ -783,7 +781,14 @@ class HNSWIndex:
                         curr_obj = neighbors[min_idx]
                         changed = True
                             
-        W = self._search_layer(query_c, [curr_obj], ef, 0)
+        if return_visited:
+            W, visited_count = self._search_layer(query_c, [curr_obj], ef, 0, return_visited=True)
+            self.last_visited_count = visited_count
+        else:
+            W = self._search_layer(query_c, [curr_obj], ef, 0, return_visited=False)
+            self.last_visited_count = 0
+            visited_count = 0
+
         W.sort(key=lambda x: x[1])
         
         results = []
@@ -796,11 +801,13 @@ class HNSWIndex:
                 if len(results) == k:
                     break
                         
+        if return_visited:
+            return results, visited_count
         return results
 
-    def search(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None) -> List[Tuple[int, float, dict]]:
+    def search(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None, return_visited: bool = False):
         with self.lock.read():
-            return self._search_unlocked(query, k=k, ef=ef, filter_dict=filter_dict)
+            return self._search_unlocked(query, k=k, ef=ef, filter_dict=filter_dict, return_visited=return_visited)
 
     def batch_search(
         self,
@@ -808,34 +815,35 @@ class HNSWIndex:
         k: int = 10,
         ef: int = None,
         filter_dict: dict = None,
-        num_threads: int = None
-    ) -> List[List[Tuple[int, float, dict]]]:
+        num_threads: int = None,
+        return_visited: bool = False
+    ):
         """
         Batched search across multiple query vectors.
         Releases GIL in native hot path to execute searches concurrently across threads.
         """
         with self.lock.read():
             if self.entry_point is None or len(queries) == 0:
-                return [[] for _ in range(len(queries))]
+                return [([], 0) if return_visited else [] for _ in range(len(queries))]
                 
             queries_arr = np.ascontiguousarray(queries, dtype=np.float32)
             n_queries = len(queries_arr)
             
             if n_queries == 1 or num_threads == 1:
-                return [self._search_unlocked(queries_arr[i], k=k, ef=ef, filter_dict=filter_dict) for i in range(n_queries)]
+                return [self._search_unlocked(queries_arr[i], k=k, ef=ef, filter_dict=filter_dict, return_visited=return_visited) for i in range(n_queries)]
                 
             workers = num_threads if num_threads is not None else min(32, os.cpu_count() or 4)
             chunk_size = max(1, n_queries // (workers * 4))
             chunks = [queries_arr[i:i+chunk_size] for i in range(0, n_queries, chunk_size)]
             
             def _search_chunk(chunk):
-                return [self._search_unlocked(q, k=k, ef=ef, filter_dict=filter_dict) for q in chunk]
+                return [self._search_unlocked(q, k=k, ef=ef, filter_dict=filter_dict, return_visited=return_visited) for q in chunk]
                 
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 nested = list(executor.map(_search_chunk, chunks))
                 return [item for sublist in nested for item in sublist]
 
-    def _search_layer(self, query: np.ndarray, entry_points: List[int], ef: int, layer: int) -> List[Tuple[int, float]]:
+    def _search_layer(self, query: np.ndarray, entry_points: List[int], ef: int, layer: int, return_visited: bool = False):
         if HAS_NATIVE and len(self.layer_edges) > layer:
             vec_matrix = self.nodes.get_matrix()
             if len(vec_matrix) > 0 and len(entry_points) > 0:
@@ -845,21 +853,36 @@ class HNSWIndex:
                 )
                 if len(ep_indices) > 0:
                     query_c = np.ascontiguousarray(query, dtype=np.float32)
-                    raw_res = search_layer_native(
-                        query_c,
-                        ep_indices,
-                        ef,
-                        vec_matrix,
-                        self.layer_edges[layer],
-                        self.layer_degrees[layer],
-                        self.metric_code
-                    )
-                    idx_to_id = self.nodes.index_to_node_id
-                    return [(idx_to_id[idx], dist) for idx, dist in raw_res if idx in idx_to_id]
+                    if return_visited:
+                        raw_res, visited_count = search_layer_native(
+                            query_c,
+                            ep_indices,
+                            ef,
+                            vec_matrix,
+                            self.layer_edges[layer],
+                            self.layer_degrees[layer],
+                            self.metric_code,
+                            return_visited=True
+                        )
+                        idx_to_id = self.nodes.index_to_node_id
+                        return [(idx_to_id[idx], dist) for idx, dist in raw_res if idx in idx_to_id], visited_count
+                    else:
+                        raw_res = search_layer_native(
+                            query_c,
+                            ep_indices,
+                            ef,
+                            vec_matrix,
+                            self.layer_edges[layer],
+                            self.layer_degrees[layer],
+                            self.metric_code,
+                            return_visited=False
+                        )
+                        idx_to_id = self.nodes.index_to_node_id
+                        return [(idx_to_id[idx], dist) for idx, dist in raw_res if idx in idx_to_id]
 
-        return self._search_layer_python(query, entry_points, ef, layer)
+        return self._search_layer_python(query, entry_points, ef, layer, return_visited=return_visited)
 
-    def _search_layer_python(self, query: np.ndarray, entry_points: List[int], ef: int, layer: int) -> List[Tuple[int, float]]:
+    def _search_layer_python(self, query: np.ndarray, entry_points: List[int], ef: int, layer: int, return_visited: bool = False):
         visited = set(entry_points)
         C = []
         W = []
@@ -901,7 +924,10 @@ class HNSWIndex:
                     if len(W) > ef:
                         heapq.heappop(W)
                             
-        return [(n_id, -d_neg) for d_neg, n_id in W]
+        res = [(n_id, -d_neg) for d_neg, n_id in W]
+        if return_visited:
+            return res, len(visited)
+        return res
 
     def _select_neighbors(self, base_vector: np.ndarray, candidates: List[Tuple[int, float]], M: int) -> List[Tuple[int, float]]:
         if not self.config.heuristic:

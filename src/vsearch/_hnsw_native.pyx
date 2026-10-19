@@ -23,7 +23,8 @@ cdef extern from "hnsw_core.hpp" namespace "hnsw" nogil:
         const int* edges,
         const int* degrees,
         int max_neighbors,
-        int metric
+        int metric,
+        int* num_visited
     )
 
     pair[int, float] greedy_search_layer(
@@ -64,7 +65,8 @@ def search_layer_native(
     cnp.ndarray[cnp.float32_t, ndim=2, mode="c"] vectors,
     cnp.ndarray[cnp.int32_t, ndim=2, mode="c"] edges,
     cnp.ndarray[cnp.int32_t, ndim=1, mode="c"] degrees,
-    int metric
+    int metric,
+    bint return_visited=False
 ):
     cdef int num_entry_points = entry_points.shape[0]
     cdef int num_vectors = vectors.shape[0]
@@ -76,6 +78,7 @@ def search_layer_native(
     cdef const int* edges_ptr = <const int*>edges.data
     cdef const int* degrees_ptr = <const int*>degrees.data
     cdef vector[pair[int, float]] c_results
+    cdef int visited_count = 0
 
     with nogil:
         c_results = search_layer(
@@ -89,13 +92,16 @@ def search_layer_native(
             edges_ptr,
             degrees_ptr,
             max_neighbors,
-            metric
+            metric,
+            &visited_count
         )
 
     cdef list py_results = []
     cdef size_t i
     for i in range(c_results.size()):
         py_results.append((c_results[i].first, c_results[i].second))
+    if return_visited:
+        return py_results, visited_count
     return py_results
 
 def greedy_search_layer_native(
@@ -220,7 +226,8 @@ def batch_search_layer_native(
                 edges_ptr,
                 degrees_ptr,
                 max_neighbors,
-                metric
+                metric,
+                NULL
             )
 
     cdef list py_batch_results = []

@@ -52,14 +52,13 @@ def benchmark_faiss(base_vectors: np.ndarray, query_vectors: np.ndarray, I_gt: n
         faiss_index.hnsw.efSearch = ef
         
         # Warmup
-        faiss_index.search(query_vectors[:100], 100)
+        faiss_index.search(query_vectors[:100], 10)
         
         run_qps = []
         run_p50 = []
         run_p95 = []
         run_p99 = []
         run_r10 = []
-        run_r100 = []
         
         for run_idx in range(NUM_RUNS):
             latencies = []
@@ -67,14 +66,13 @@ def benchmark_faiss(base_vectors: np.ndarray, query_vectors: np.ndarray, I_gt: n
             for i in range(NUM_QUERIES):
                 q = query_vectors[i:i+1]
                 t0 = time.perf_counter()
-                D, I = faiss_index.search(q, 100)
+                D, I = faiss_index.search(q, 10)
                 t1 = time.perf_counter()
                 latencies.append((t1 - t0) * 1000)
                 I_results.append(I[0])
                 
             I_results = np.array(I_results)
             r10 = compute_recall(I_results, I_gt, 10)
-            r100 = compute_recall(I_results, I_gt, 100)
             qps = NUM_QUERIES / (sum(latencies) / 1000)
             
             run_qps.append(qps)
@@ -82,16 +80,23 @@ def benchmark_faiss(base_vectors: np.ndarray, query_vectors: np.ndarray, I_gt: n
             run_p95.append(np.percentile(latencies, 95))
             run_p99.append(np.percentile(latencies, 99))
             run_r10.append(r10)
-            run_r100.append(r100)
             
         mean_qps, std_qps = float(np.mean(run_qps)), float(np.std(run_qps))
         mean_p50 = float(np.mean(run_p50))
         mean_p95, std_p95 = float(np.mean(run_p95)), float(np.std(run_p95))
         mean_p99 = float(np.mean(run_p99))
         mean_r10 = float(np.mean(run_r10))
-        mean_r100 = float(np.mean(run_r100))
         
-        print(f"efSearch={ef:<4} | R@10: {mean_r10:.4f} | R@100: {mean_r100:.4f} | QPS: {mean_qps:8.2f} ± {std_qps:5.2f} | p95: {mean_p95:6.3f}ms")
+        # Evaluate Recall@100 if ef >= 100
+        if ef >= 100:
+            _, I100 = faiss_index.search(query_vectors, 100)
+            mean_r100 = compute_recall(I100, I_gt, 100)
+            r100_str = f"{mean_r100:.4f}"
+        else:
+            mean_r100 = None
+            r100_str = "N/A (ef<100)"
+        
+        print(f"efSearch={ef:<4} | R@10: {mean_r10:.4f} | R@100: {r100_str:<12} | QPS: {mean_qps:8.2f} ± {std_qps:5.2f} | p95: {mean_p95:6.3f}ms")
         
         results.append({
             "ef": ef,
@@ -129,14 +134,13 @@ def benchmark_vsearch(base_vectors: np.ndarray, query_vectors: np.ndarray, I_gt:
         
         # Warmup
         for i in range(100):
-            vsearch_index.search(query_vectors[i], k=100)
+            vsearch_index.search(query_vectors[i], k=10)
             
         run_qps = []
         run_p50 = []
         run_p95 = []
         run_p99 = []
         run_r10 = []
-        run_r100 = []
         
         for run_idx in range(NUM_RUNS):
             latencies = []
@@ -144,18 +148,15 @@ def benchmark_vsearch(base_vectors: np.ndarray, query_vectors: np.ndarray, I_gt:
             for i in range(NUM_QUERIES):
                 q = query_vectors[i]
                 t0 = time.perf_counter()
-                res = vsearch_index.search(q, k=100, ef=ef)
+                res = vsearch_index.search(q, k=10, ef=ef)
                 t1 = time.perf_counter()
                 latencies.append((t1 - t0) * 1000)
                 
                 approx_ids = [node_id for node_id, _, _ in res]
-                while len(approx_ids) < 100:
-                    approx_ids.append(-1)
                 I_results.append(approx_ids)
                 
             I_results = np.array(I_results)
             r10 = compute_recall(I_results, I_gt, 10)
-            r100 = compute_recall(I_results, I_gt, 100)
             qps = NUM_QUERIES / (sum(latencies) / 1000)
             
             run_qps.append(qps)
@@ -163,16 +164,26 @@ def benchmark_vsearch(base_vectors: np.ndarray, query_vectors: np.ndarray, I_gt:
             run_p95.append(np.percentile(latencies, 95))
             run_p99.append(np.percentile(latencies, 99))
             run_r10.append(r10)
-            run_r100.append(r100)
             
         mean_qps, std_qps = float(np.mean(run_qps)), float(np.std(run_qps))
         mean_p50 = float(np.mean(run_p50))
         mean_p95, std_p95 = float(np.mean(run_p95)), float(np.std(run_p95))
         mean_p99 = float(np.mean(run_p99))
         mean_r10 = float(np.mean(run_r10))
-        mean_r100 = float(np.mean(run_r100))
         
-        print(f"efSearch={ef:<4} | R@10: {mean_r10:.4f} | R@100: {mean_r100:.4f} | QPS: {mean_qps:8.2f} ± {std_qps:5.2f} | p95: {mean_p95:6.3f}ms")
+        # Evaluate Recall@100 if ef >= 100
+        if ef >= 100:
+            I100_results = []
+            for i in range(NUM_QUERIES):
+                res100 = vsearch_index.search(query_vectors[i], k=100, ef=ef)
+                I100_results.append([node_id for node_id, _, _ in res100])
+            mean_r100 = compute_recall(np.array(I100_results), I_gt, 100)
+            r100_str = f"{mean_r100:.4f}"
+        else:
+            mean_r100 = None
+            r100_str = "N/A (ef<100)"
+        
+        print(f"efSearch={ef:<4} | R@10: {mean_r10:.4f} | R@100: {r100_str:<12} | QPS: {mean_qps:8.2f} ± {std_qps:5.2f} | p95: {mean_p95:6.3f}ms")
         
         results.append({
             "ef": ef,

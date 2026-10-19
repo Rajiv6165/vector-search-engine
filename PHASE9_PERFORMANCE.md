@@ -144,27 +144,67 @@ Unlike Phase 5, where multi-threaded contention degraded throughput, Phase 9 mai
 - **Parameters**: `M=16`, `efConstruction=100`, swept `efSearch` $\in [10, 20, 50, 100, 200]$.
 - **Repetitions**: 3 runs per configuration to report mean and standard deviation.
 
-### 6.1 Results Summary Table
+### 6.1 Results Summary Table (Corrected Unclamped Sweep)
 
 | Engine | Build Time | efSearch | Recall@10 | Recall@100 | QPS (1 thread) | p50 Latency | p95 Latency | p99 Latency |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **FAISS (`IndexHNSWFlat`)** | **2.68s** | 10 | 78.27% | 48.54% | 15,067 ± 1018 | 0.06 ms | 0.09 ms | 0.13 ms |
-| | | 20 | 89.18% | 65.46% | 9,319 ± 1002 | 0.10 ms | 0.15 ms | 0.20 ms |
-| | | 50 | 97.41% | 86.84% | 5,369 ± 430 | 0.17 ms | 0.23 ms | 0.30 ms |
-| | | 100 | 99.40% | 95.92% | 3,514 ± 80 | 0.27 ms | 0.44 ms | 0.54 ms |
-| | | 200 | 99.91% | 99.12% | 1,953 ± 51 | 0.50 ms | 0.76 ms | 0.91 ms |
-| **vsearch (Phase 6 Python)** | 923.60s | 10 | 88.69% | 85.75% | 306 | 3.12 ms | 4.37 ms | 5.82 ms |
-| | | 50 | 88.69% | 85.75% | 284 | 3.55 ms | 5.25 ms | 6.89 ms |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **FAISS (`IndexHNSWFlat`)** | **2.70s** | 10 | 78.27% | N/A | 15,357 ± 322 | 0.063 ms | 0.093 ms | 0.125 ms |
+| | | 20 | 89.18% | N/A | 9,578 ± 145 | 0.100 ms | 0.154 ms | 0.198 ms |
+| | | 50 | 97.41% | N/A | 4,756 ± 38 | 0.203 ms | 0.309 ms | 0.380 ms |
+| | | 100 | 99.40% | 95.92% | 2,611 ± 35 | 0.366 ms | 0.550 ms | 0.677 ms |
+| | | 200 | 99.91% | 99.12% | 1,262 ± 12 | 0.742 ms | 1.122 ms | 1.401 ms |
+| **vsearch (Phase 6 Python)** | 923.60s | 10 *(clamped)* | 88.69% | 85.75% | 306 | 3.12 ms | 4.37 ms | 5.82 ms |
+| *(Historical Clamped)* | | 50 *(clamped)* | 88.69% | 85.75% | 284 | 3.55 ms | 5.25 ms | 6.89 ms |
 | | | 100 | 88.69% | 85.75% | 276 | 3.61 ms | 5.19 ms | 7.12 ms |
 | | | 200 | 89.44% | 88.84% | 169 | 5.84 ms | 8.01 ms | 9.94 ms |
-| **vsearch (Phase 9 Native)** | **234.09s** | 10 | **99.63%** | 97.28% | 1,237 ± 90 | 0.76 ms | 1.44 ms | 1.82 ms |
-| *(Ours)* | | 20 | **99.63%** | 97.28% | 1,295 ± 93 | 0.72 ms | 1.22 ms | 1.63 ms |
-| | | 50 | **99.63%** | 97.28% | **1,307 ± 65** | 0.72 ms | **1.20 ms** | 1.62 ms |
-| | | 100 | **99.63%** | 97.28% | 1,272 ± 25 | 0.74 ms | 1.42 ms | 1.84 ms |
-| | | 200 | **99.95%** | **99.45%** | 791 ± 23 | 1.21 ms | 2.33 ms | 2.89 ms |
+| **vsearch (Phase 9 Native)** | **284.87s** | 10 | **82.79%** | N/A | **7,666 ± 38** | 0.119 ms | **0.170 ms** | 0.218 ms |
+| *(Ours - Corrected)* | | 20 | **91.92%** | N/A | **5,334 ± 27** | 0.176 ms | **0.266 ms** | 0.347 ms |
+| | | 50 | **98.26%** | N/A | **2,960 ± 19** | 0.320 ms | **0.461 ms** | 0.565 ms |
+| | | 100 | **99.64%** | **97.27%** | **1,790 ± 20** | 0.528 ms | **0.773 ms** | 0.970 ms |
+| | | 200 | **99.97%** | **99.47%** | **1,059 ± 15** | 0.887 ms | **1.630 ms** | 2.274 ms |
 
-### 6.2 Tradeoff Curve
+---
+
+### 6.2 Investigation: Root Cause of the `efSearch` Clamping Artifact
+
+In earlier runs (Phase 6 and initial Phase 9 numbers), `vsearch` produced completely identical Recall@10 (99.63%), Recall@100 (97.28%), and QPS (~1,237 - 1,307) across `efSearch` values 10, 20, 50, and 100. Similarly, Phase 6 Python benchmarks showed a flat 88.69% recall across `ef=10, 50, 100`.
+
+For full transparency, here are the **original clamped Phase 9 numbers**:
+
+| Engine | efSearch | Recall@10 | Recall@100 | QPS | Note |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **vsearch (Original Native Run)** | 10 | 99.63% | 97.28% | 1,237 | *Clamped to ef=100* |
+| | 20 | 99.63% | 97.28% | 1,295 | *Clamped to ef=100* |
+| | 50 | 99.63% | 97.28% | 1,307 | *Clamped to ef=100* |
+| | 100 | 99.63% | 97.28% | 1,272 | *Legitimate ef=100* |
+| | 200 | 99.95% | 99.45% | 791 | *Legitimate ef=200* |
+
+#### Tracing the Overrides:
+1. **The `max(ef, k)` Benchmark Clamping Bug**:
+   In `src/vsearch/hnsw.py`:
+   ```python
+   ef = max(ef, k)
+   ```
+   In `benchmarks/bench_vs_faiss.py` and Phase 6's benchmark harness, queries were dispatched as `search(query, k=100, ef=ef)` so both Recall@10 and Recall@100 could be computed from a single result set. However, because $k=100$, `max(ef, 100)` clamped `ef` to **100** for all $ef \in [10, 20, 50, 100]$! Only $ef=200$ was greater than $k=100$, which was why only $ef=200$ moved the needle.
+2. **Artificial `k * 5` Deletion Clamp**:
+   In `src/vsearch/hnsw.py`, there was also an artificial clamp:
+   ```python
+   if filter_dict or self.deleted_nodes:
+       ef = max(ef, k * 5)
+   ```
+   This forced `ef` to at least $5 \times k$ whenever deletions or filters were present, overriding the user-specified `efSearch`.
+3. **The Fix**:
+   - Strictly enforced that only `max(ef, k)` is allowed, removing the `k * 5` inflation.
+   - Updated `benchmarks/bench_vs_faiss.py` to evaluate Recall@10 using $k=10$ (enabling $ef=10, 20, 50$ to search with their true candidate queue limits), while evaluating Recall@100 for $ef \ge 100$ ($k=100$).
+   - Added instrumented visited node tracking (`num_visited`) into C++ `search_layer`, exposed via Cython and Python (`return_visited=True` / `self.last_visited_count`).
+   - Added regression test `tests/test_ef_search.py` asserting that $ef=10$ vs $ef=100$ produces a meaningful recall difference ($ef=10$ lower) and that visited node counts grow monotonically ($> 1.5\times$ growth).
+
+---
+
+### 6.3 Tradeoff Curve
 ![Recall@10 vs QPS](benchmarks/faiss_tradeoff.png)
+
+The corrected tradeoff curve shows the expected monotonic Pareto frontier: as `efSearch` increases from 10 to 200, `vsearch` traces a smooth curve from **7,666 QPS (82.79% recall)** to **1,059 QPS (99.97% recall)**.
 
 ---
 
@@ -172,16 +212,32 @@ Unlike Phase 5, where multi-threaded contention degraded throughput, Phase 9 mai
 
 In keeping with our commitment to engineering honesty, we transparently document the remaining performance gaps between our engine and FAISS:
 
-### 1. Index Build Time (2.68s vs 234.09s)
+### 1. Index Build Time (2.70s vs 284.87s)
 - **FAISS**: Built entirely in C++ with inline assembly instructions. It allocates all graph layers into flat, monolithic memory arrays with zero dynamic dictionary resizing. It does not perform persistence, durability checks, or Write-Ahead Logging.
-- **vsearch**: Our build time improved by **nearly 4x** (234s vs 923s). However, our engine still coordinates graph level generation, reverse edge updates, and persistence metadata through Python. Furthermore, our engine maintains full disk persistence (`mmap` allocation + WAL recording), providing crash recovery guarantees that FAISS flat indices omit.
+- **vsearch**: Our build time improved by **over 3.2x** (284s vs 923s). However, our engine still coordinates graph level generation, reverse edge updates, and persistence metadata through Python. Furthermore, our engine maintains full disk persistence (`mmap` allocation + WAL recording), providing crash recovery guarantees that FAISS flat indices omit.
 
-### 2. Low-ef Raw QPS (15,067 vs 1,237 QPS)
-- **SIMD Intrinsics & FMA**: FAISS implements hand-crafted AVX2/AVX-512 vector distance kernels utilizing fused multiply-accumulate (`_mm256_fmadd_ps`) with unrolled accumulators and explicit cache prefetching (`_mm_prefetch`). Our engine relies on compiler auto-vectorization (`#pragma omp simd` / `/fp:fast`).
+### 2. Search QPS vs Accuracy Tradeoff
+With the `efSearch` clamp resolved, the true comparison between `vsearch` and FAISS is substantially closer than previously reported:
+
+| Operating Point | FAISS QPS | FAISS Recall@10 | vsearch QPS | vsearch Recall@10 | Accuracy Delta | QPS Ratio |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Low Latency (`ef=10`)** | 15,357 | 78.27% | **7,666** | **82.79%** | **+4.52% vsearch** | 2.0x |
+| **Balanced (`ef=20`)** | 9,578 | 89.18% | **5,334** | **91.92%** | **+2.74% vsearch** | 1.8x |
+| **Production (`ef=50`)** | 4,756 | 97.41% | **2,960** | **98.26%** | **+0.85% vsearch** | 1.6x |
+| **High Recall (`ef=100`)**| 2,611 | 99.40% | **1,790** | **99.64%** | **+0.24% vsearch** | 1.46x |
+| **Max Recall (`ef=200`)** | 1,262 | 99.91% | **1,059** | **99.97%** | **+0.06% vsearch** | 1.19x |
+
+**Key Insights**:
+1. **vsearch achieves higher recall across every single operating point** because Algorithm 4 (Malkov & Yashunin diversity heuristic) creates better long-range geometric shortcuts than FAISS's default greedy pruning on this dataset.
+2. At `ef=10`, FAISS operates at 15,357 QPS but sacrifices recall (78.27%). `vsearch` achieves **82.79% Recall@10 at 7,666 QPS** (p95 latency = 0.170 ms).
+3. At the high-accuracy regime (`ef=100`), FAISS runs at 2,611 QPS while `vsearch` runs at 1,790 QPS — a difference of **only 1.46x**.
+4. At `ef=200`, the gap narrows to **1.19x** (1,262 vs 1,059 QPS).
+
+### 3. SIMD Intrinsics & Cache Architecture
+- **SIMD Kernel**: FAISS implements hand-crafted AVX2/AVX-512 vector distance kernels utilizing fused multiply-accumulate (`_mm256_fmadd_ps`) with unrolled accumulators and explicit cache prefetching (`_mm_prefetch`). Our engine relies on compiler auto-vectorization (`#pragma omp simd` / `/fp:fast`).
 - **Cache Locality**: FAISS stores all node connections in fixed-stride contiguous memory blocks without pointer indirection.
-- **Recall Difference at Low ef**: At `ef=10`, FAISS achieves 15,067 QPS but sacrifices accuracy (Recall@10 is only 78.27%). At `ef=10`, our engine achieves **99.63% Recall@10** at 1,237 QPS. When comparing at equivalent high-recall regimes (~99.4%+), FAISS operates at 3,514 QPS, narrowing the performance gap to ~2.7x.
 
-### 3. Our Architectural Value
+### 4. Our Architectural Value
 Our engine was built not to replace FAISS as an in-memory compute library, but to provide an **end-to-end vector database service**:
 - **Durability & Crash Recovery**: WAL write-ahead log and snapshotting.
 - **Thread Safety**: Concurrent Read-Write Locks (`RWLock`).
@@ -193,5 +249,6 @@ Our engine was built not to replace FAISS as an in-memory compute library, but t
 ## 8. Verification & CI Matrix
 
 - **Equivalence Testing**: `tests/test_native_vs_python.py` asserts that native and pure-Python paths produce identical candidate sets and distances for identical queries and graphs.
-- **Regression Testing**: All 12 unit and integration tests (`tests/test_api.py`, `tests/test_compaction.py`, `tests/test_concurrency.py`, `tests/test_hnsw_recall.py`, `tests/test_persistence.py`, `tests/test_native_vs_python.py`) pass cleanly in under 10 seconds.
+- **`efSearch` Scaling & Queue Scaling**: `tests/test_ef_search.py` validates that `ef=10` vs `ef=100` exhibits statistically significant recall differences and monotonic visited node growth on both native and pure-Python paths.
+- **Regression Testing**: All 14 unit and integration tests (`tests/test_api.py`, `tests/test_compaction.py`, `tests/test_concurrency.py`, `tests/test_ef_search.py`, `tests/test_hnsw_recall.py`, `tests/test_persistence.py`, `tests/test_native_vs_python.py`) pass cleanly in under 15 seconds.
 - **CI Matrix**: Tested and verified on Python 3.10 and Python 3.14. Direct dependencies pinned in `requirements.txt` and `pyproject.toml`.

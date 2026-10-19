@@ -67,9 +67,11 @@ inline std::vector<std::pair<int, float>> search_layer(
     const int* edges,
     const int* degrees,
     int max_neighbors,
-    int metric
+    int metric,
+    int* num_visited = nullptr
 ) {
     std::vector<uint8_t> visited(num_vectors, 0);
+    int visited_cnt = 0;
 
     // C is min-heap: candidate closest to query is popped first
     std::priority_queue<Candidate, std::vector<Candidate>, std::greater<Candidate>> C;
@@ -80,6 +82,7 @@ inline std::vector<std::pair<int, float>> search_layer(
         int ep = entry_points[i];
         if (ep < 0 || ep >= num_vectors) continue;
         visited[ep] = 1;
+        visited_cnt++;
         float d = compute_distance(query, vectors + (size_t)ep * dim, dim, metric);
         C.push({d, ep});
         W.push({d, ep});
@@ -104,6 +107,7 @@ inline std::vector<std::pair<int, float>> search_layer(
             if (n < 0 || n >= num_vectors) continue;
             if (visited[n]) continue;
             visited[n] = 1;
+            visited_cnt++;
 
             float d = compute_distance(query, vectors + (size_t)n * dim, dim, metric);
             f_dist = W.top().dist;
@@ -116,6 +120,10 @@ inline std::vector<std::pair<int, float>> search_layer(
                 }
             }
         }
+    }
+
+    if (num_visited != nullptr) {
+        *num_visited = visited_cnt;
     }
 
     std::vector<std::pair<int, float>> results;

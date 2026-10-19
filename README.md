@@ -47,18 +47,20 @@ We rigorously benchmarked our engine against Meta's production-grade `faiss.Inde
 
 | Metric | vsearch (Phase 6 Python) | vsearch (Phase 9 Native) | FAISS (C++) |
 | :--- | :--- | :--- | :--- |
-| **Index Build Time** | ~15.4 mins (923.6s) | **~3.9 mins (234.1s)** | ~2.7 secs |
-| **Recall@10** | 88.7% - 96.2% | **99.63% - 99.95%** | 99.40% - 99.91% |
-| **Recall@100** | 85.75% | **97.28% - 99.45%** | 95.92% - 99.12% |
-| **QPS (Single-Thread)**| 276 QPS | **1,307 QPS** | 3,514 QPS |
+| **Index Build Time** | ~15.4 mins (923.6s) | **~4.7 mins (284.9s)** | ~2.7 secs |
+| **Recall@10** | 88.7% - 96.2% | **82.79% - 99.97%** | 78.27% - 99.91% |
+| **Recall@100** | 85.75% | **97.27% - 99.47%** | 95.92% - 99.12% |
+| **QPS (Single-Thread)**| 169 - 306 QPS | **1,059 - 7,666 QPS** | 1,262 - 15,357 QPS |
 | **Batch Search QPS** | ~300 QPS | **8,389 QPS** | 15,000+ QPS |
-| **p95 Latency** | ~5.19 ms | **1.20 ms** | 0.44 ms |
+| **p95 Latency** | 4.37 - 8.01 ms | **0.17 - 1.63 ms** | 0.09 - 1.12 ms |
 
 ![Recall vs QPS Tradeoff](benchmarks/faiss_tradeoff.png)
 
+> **Note on `efSearch` Evaluation**: Earlier Phase 6 and preliminary Phase 9 benchmarks suffered from an artifact where queries passing $k=100$ clamped $efSearch \le 100$ via `max(ef, k)`. With the unclamped sweep now properly evaluated across $ef \in [10, 200]$, `vsearch` traces a true Pareto tradeoff curve, outperforming FAISS's Recall@10 at every single operating point (+4.52% at $ef=10$, +2.74% at $ef=20$) while reaching **7,666 QPS**. See [Phase 9 Performance Report](PHASE9_PERFORMANCE.md#62-investigation-root-cause-of-the-efsearch-clamping-artifact) for the full breakdown and historical comparison.
+
 **Phase 9 Performance Highlights**:
 - **Native Hot Path**: Moved greedy graph traversal (`_search_layer`), distance calculation, heaps, and visited tracking into a compiled Cython/C++ extension (`_hnsw_native`) with zero-overhead contiguous float32 storage and OpenMP SIMD vectorization.
-- **Algorithm 4 Diversity Heuristic**: Replaced simple closest-M neighbor pruning with Malkov & Yashunin (2016) diversity-aware heuristic, pushing Recall@10 from the 88.7% plateau to **99.63% - 99.95%**.
+- **Algorithm 4 Diversity Heuristic**: Replaced simple closest-M neighbor pruning with Malkov & Yashunin (2016) diversity-aware heuristic, pushing Recall@10 from the 88.7% plateau to **82.8% - 99.97%** (surpassing FAISS at every equivalent $ef$).
 - **Universal Fallback**: Automatic pure-Python fallback when compiled extensions are unavailable (`pip install -e .` works in all environments).
 - **Multi-Threaded Concurrency**: GIL release (`nogil`) enables parallel batched searches up to **8,389 QPS**.
 
