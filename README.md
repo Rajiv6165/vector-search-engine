@@ -43,17 +43,26 @@ flowchart TD
 
 ## Benchmarks vs FAISS
 
-We rigorously benchmarked our Python HNSW implementation against Meta's `faiss.IndexHNSWFlat` using the standard SIFT1M dataset (100K subset, 128 dimensions).
+We rigorously benchmarked our engine against Meta's production-grade `faiss.IndexHNSWFlat` using the standard SIFT1M dataset (100K base vectors, 1,000 queries, 128 dimensions).
 
-| Metric | vsearch (Ours) | FAISS (C++) |
-| :--- | :--- | :--- |
-| **Index Build Time** | ~15.4 mins | ~3 secs |
-| **Recall@10** | **96.2%** | **99.9%** |
-| **QPS (Latency)** | 276 (~3.6ms) | 3,809 (~0.26ms) |
+| Metric | vsearch (Phase 6 Python) | vsearch (Phase 9 Native) | FAISS (C++) |
+| :--- | :--- | :--- | :--- |
+| **Index Build Time** | ~15.4 mins (923.6s) | **~3.9 mins (234.1s)** | ~2.7 secs |
+| **Recall@10** | 88.7% - 96.2% | **99.63% - 99.95%** | 99.40% - 99.91% |
+| **Recall@100** | 85.75% | **97.28% - 99.45%** | 95.92% - 99.12% |
+| **QPS (Single-Thread)**| 276 QPS | **1,307 QPS** | 3,514 QPS |
+| **Batch Search QPS** | ~300 QPS | **8,389 QPS** | 15,000+ QPS |
+| **p95 Latency** | ~5.19 ms | **1.20 ms** | 0.44 ms |
 
-**The Tradeoff**: FAISS is an optimized C++ library with SIMD instructions, making it exponentially faster at raw compute. Our engine explicitly trades this raw speed for disk-backed WAL durability, metadata filtering, concurrency control, and pure-Python maintainability.
+![Recall vs QPS Tradeoff](benchmarks/faiss_tradeoff.png)
 
-Read the deep-dive analysis: [Phase 6 Benchmarks Report](PHASE6_BENCHMARKS.md).
+**Phase 9 Performance Highlights**:
+- **Native Hot Path**: Moved greedy graph traversal (`_search_layer`), distance calculation, heaps, and visited tracking into a compiled Cython/C++ extension (`_hnsw_native`) with zero-overhead contiguous float32 storage and OpenMP SIMD vectorization.
+- **Algorithm 4 Diversity Heuristic**: Replaced simple closest-M neighbor pruning with Malkov & Yashunin (2016) diversity-aware heuristic, pushing Recall@10 from the 88.7% plateau to **99.63% - 99.95%**.
+- **Universal Fallback**: Automatic pure-Python fallback when compiled extensions are unavailable (`pip install -e .` works in all environments).
+- **Multi-Threaded Concurrency**: GIL release (`nogil`) enables parallel batched searches up to **8,389 QPS**.
+
+Read the deep-dive analysis: [Phase 9 Performance Report](PHASE9_PERFORMANCE.md) and earlier [Phase 6 Benchmarks Report](PHASE6_BENCHMARKS.md).
 
 ## Quickstart (Local & Docker)
 
@@ -70,6 +79,7 @@ The API will be available at `http://localhost:8000`.
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
+pip install -e .
 uvicorn src.vsearch.api.app:app --host 0.0.0.0 --port 8000
 ```
 
@@ -80,12 +90,13 @@ from src.vsearch.client import VSearchClient
 
 client = VSearchClient("http://localhost:8000")
 
-# 1. Insert
+# 1. Single & Batch Insert
 client.insert(node_id=1, vector=[0.1, 0.5, ...], metadata={"author": "Alice"})
+client.batch_insert(vectors=[[0.1, ...], [0.2, ...]], node_ids=[2, 3])
 
-# 2. Search
+# 2. Single & Batch Search
 results = client.search(vector=[0.1, 0.5, ...], k=10)
-print(results)
+batch_results = client.batch_search(vectors=[[0.1, ...], [0.2, ...]], k=10)
 
 # 3. Delete
 client.delete(node_id=1)
@@ -100,4 +111,5 @@ For those who want to go deep into the systems engineering decisions, read throu
 *   [Phase 4: API Layer](PHASE4_API.md)
 *   [Phase 5: Concurrency](PHASE5_CONCURRENCY.md)
 *   [Phase 6: Benchmarks & FAISS](PHASE6_BENCHMARKS.md)
+*   [Phase 9: Performance Engineering](PHASE9_PERFORMANCE.md)
 *   [Deployment Guide](DEPLOYMENT.md)

@@ -23,6 +23,23 @@ class VSearchClient:
         resp = requests.post(url, json=payload)
         resp.raise_for_status()
         return resp.json()
+
+    def batch_insert(self, vectors: List[List[float]], node_ids: Optional[List[int]] = None, metadatas: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """
+        Batch insert multiple vectors into the index.
+        """
+        url = f"{self.base_url}/vectors/batch"
+        payload = {
+            "vectors": vectors,
+        }
+        if node_ids is not None:
+            payload["node_ids"] = node_ids
+        if metadatas is not None:
+            payload["metadatas"] = metadatas
+            
+        resp = requests.post(url, json=payload)
+        resp.raise_for_status()
+        return resp.json()
         
     def delete(self, node_id: int) -> Dict[str, Any]:
         """
@@ -45,6 +62,25 @@ class VSearchClient:
         }
         if filter_dict is not None:
             payload["filter"] = filter_dict
+            
+        resp = requests.post(url, json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
+    def batch_search(self, vectors: List[List[float]], k: int = 10, ef: int = 50, filter_dict: Optional[Dict[str, Any]] = None, num_threads: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Batch search across multiple query vectors.
+        """
+        url = f"{self.base_url}/search/batch"
+        payload = {
+            "vectors": vectors,
+            "k": k,
+            "ef": ef
+        }
+        if filter_dict is not None:
+            payload["filter"] = filter_dict
+        if num_threads is not None:
+            payload["num_threads"] = num_threads
             
         resp = requests.post(url, json=payload)
         resp.raise_for_status()

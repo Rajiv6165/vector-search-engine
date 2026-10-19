@@ -62,6 +62,24 @@ def run_api_tests():
             print("Running test_api_dimension_mismatch...")
             resp = client.post("/vectors", json={"node_id": 3, "vector": [0.1, 0.2]})
             assert resp.status_code == 400
+
+            print("Running test_api_batch_operations...")
+            resp = client.post("/vectors/batch", json={
+                "vectors": [[0.5, 0.5, 0.5, 0.5], [0.6, 0.6, 0.6, 0.6]],
+                "node_ids": [10, 11]
+            })
+            assert resp.status_code == 200
+            assert resp.json()["inserted_count"] == 2
+
+            resp = client.post("/search/batch", json={
+                "vectors": [[0.5, 0.5, 0.5, 0.5], [0.1, 0.2, 0.3, 0.9]],
+                "k": 1
+            })
+            assert resp.status_code == 200
+            batch_res = resp.json()["results"]
+            assert len(batch_res) == 2
+            assert batch_res[0][0]["node_id"] == 10
+            assert batch_res[1][0]["node_id"] == 2
             
         # Test shutdown and reload
         print("Running test_lifecycle_reload...")
@@ -69,12 +87,15 @@ def run_api_tests():
             resp = client2.get("/stats")
             assert resp.status_code == 200
             data = resp.json()
-            assert data["size"] == 1
+            assert data["size"] == 3
             assert data["dim"] == 4
             
         print("All API tests passed successfully!")
     finally:
         shutil.rmtree(temp_dir)
+
+def test_api():
+    run_api_tests()
 
 if __name__ == "__main__":
     run_api_tests()

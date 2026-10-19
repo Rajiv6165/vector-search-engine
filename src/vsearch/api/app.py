@@ -11,8 +11,14 @@ from typing import Optional
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("vsearch.api")
 
-from vsearch.hnsw import HNSWIndex, HNSWConfig, VectorStore
-from vsearch.api.models import InsertRequest, InsertResponse, SearchRequest, SearchResponse, SearchResult, StatsResponse
+from vsearch.hnsw import HNSWIndex, HNSWConfig, VectorStore, ContiguousVectorStore
+from vsearch.api.models import (
+    InsertRequest, InsertResponse,
+    BatchInsertRequest, BatchInsertResponse,
+    SearchRequest, SearchResponse,
+    BatchSearchRequest, BatchSearchResponse,
+    SearchResult, StatsResponse
+)
 
 PERSIST_DIR = os.getenv("VSEARCH_PERSIST_DIR", "./vsearch_data")
 SNAPSHOT_INTERVAL_SECONDS = int(os.getenv("VSEARCH_SNAPSHOT_INTERVAL", "300"))
@@ -94,6 +100,35 @@ def insert_vector(req: InsertRequest, api_key: str = Depends(verify_api_key)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.post("/vectors/batch", response_model=BatchInsertResponse)
+def insert_vectors_batch(req: BatchInsertRequest, api_key: str = Depends(verify_api_key)):
+    if index is None:
+        raise HTTPException(status_code=500, detail="Index not initialized")
+        
+    if not req.vectors:
+        return BatchInsertResponse(inserted_count=0, node_ids=[], status="inserted")
+        
+    vecs_array = np.array(req.vectors, dtype=np.float32)
+    current_dim = 0
+    if isinstance(index.nodes, VectorStore):
+        current_dim = index.nodes.dim
+    elif len(index.nodes) > 0:
+        current_dim = len(next(iter(index.nodes.values())))
+        
+    if current_dim > 0 and vecs_array.shape[1] != current_dim:
+        raise HTTPException(status_code=400, detail=f"Vector dimension mismatch. Expected {current_dim}, got {vecs_array.shape[1]}")
+        
+    node_ids = req.node_ids
+    if node_ids is None:
+        start_id = len(index.nodes)
+        node_ids = list(range(start_id, start_id + len(vecs_array)))
+        
+    try:
+        index.batch_insert(vecs_array, node_ids=node_ids, metadatas=req.metadatas)
+        return BatchInsertResponse(inserted_count=len(node_ids), node_ids=node_ids, status="inserted")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.delete("/vectors/{node_id}")
 def delete_vector(node_id: int, api_key: str = Depends(verify_api_key)):
     if index is None:
@@ -126,6 +161,38 @@ def search_vectors(req: SearchRequest, api_key: str = Depends(verify_api_key)):
     formatted = [SearchResult(node_id=n, distance=d, metadata=m) for n, d, m in results]
     return SearchResponse(results=formatted)
 
+@app.post("/search/batch", response_model=BatchSearchResponse)
+def search_vectors_batch(req: BatchSearchRequest, api_key: str = Depends(verify_api_key)):
+    if index is None:
+        raise HTTPException(status_code=500, detail="Index not initialized")
+        
+    if not req.vectors:
+        return BatchSearchResponse(results=[])
+        
+    queries_array = np.array(req.vectors, dtype=np.float32)
+    current_dim = 0
+    if isinstance(index.nodes, VectorStore):
+        current_dim = index.nodes.dim
+    elif len(index.nodes) > 0:
+        current_dim = len(next(iter(index.nodes.values())))
+        
+    if current_dim > 0 and queries_array.shape[1] != current_dim:
+        raise HTTPException(status_code=400, detail=f"Vector dimension mismatch. Expected {current_dim}, got {queries_array.shape[1]}")
+        
+    batch_results = index.batch_search(
+        queries_array,
+        k=req.k,
+        ef=req.ef,
+        filter_dict=req.filter,
+        num_threads=req.num_threads
+    )
+    
+    formatted_batch = [
+        [SearchResult(node_id=n, distance=d, metadata=m) for n, d, m in row]
+        for row in batch_results
+    ]
+    return BatchSearchResponse(results=formatted_batch)
+
 @app.get("/stats", response_model=StatsResponse)
 def get_stats():
     if index is None:
@@ -133,11 +200,11 @@ def get_stats():
         
     current_dim = 0
     size = 0
-    if isinstance(index.nodes, VectorStore):
+    if isinstance(index.nodes, (VectorStore, ContiguousVectorStore)):
         current_dim = index.nodes.dim
-        size = len(index.nodes.node_id_to_index)
+        size = len(index.nodes.node_id_to_index) - len(index.deleted_nodes)
     else:
-        size = len(index.nodes)
+        size = len(index.nodes) - len(index.deleted_nodes)
         if size > 0:
             current_dim = len(next(iter(index.nodes.values())))
             

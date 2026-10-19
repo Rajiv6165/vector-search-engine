@@ -5,9 +5,22 @@ import os
 import json
 import struct
 from dataclasses import dataclass
-from typing import List, Tuple, Dict, Set, Callable, Optional
+from typing import List, Tuple, Dict, Set, Callable, Optional, Union
 import numpy as np
 import threading
+from concurrent.futures import ThreadPoolExecutor
+
+try:
+    from vsearch._hnsw_native import (
+        search_layer_native,
+        greedy_search_layer_native,
+        select_neighbors_heuristic_native,
+        batch_search_layer_native,
+        compute_distance_native,
+    )
+    HAS_NATIVE = True
+except ImportError:
+    HAS_NATIVE = False
 
 class RWLock:
     def __init__(self):
@@ -81,10 +94,90 @@ class HNSWConfig:
     ef_search: int = 50
     m_L: float = None  # Normalization factor for level generation
     wal_batch_size: int = 100 # Flush WAL after this many writes to reduce fsync overhead
+    heuristic: bool = True # Paper Algorithm 4 diversity-aware heuristic neighbor selection
+    extend_candidates: bool = False
+    keep_pruned_connections: bool = True
 
     def __post_init__(self):
         if self.m_L is None:
             self.m_L = 1.0 / math.log(self.M)
+
+
+class ContiguousVectorStore:
+    """
+    Contiguous in-memory float32 matrix store.
+    Keeps vectors in a single contiguous float32 2D array to enable
+    zero-copy native SIMD distance computation without per-node Python object access.
+    """
+    def __init__(self, initial_capacity: int = 1000, dtype=np.float32):
+        self.dtype = dtype
+        self.initial_capacity = initial_capacity
+        self.capacity = initial_capacity
+        self.size = 0
+        self.dim = 0
+        self.vectors: Optional[np.ndarray] = None
+        self.node_id_to_index: Dict[int, int] = {}
+        self.index_to_node_id: Dict[int, int] = {}
+        self.mmap = None
+
+    def _init_vectors(self, dim: int):
+        self.dim = dim
+        self.capacity = self.initial_capacity
+        self.vectors = np.zeros((self.capacity, self.dim), dtype=self.dtype)
+
+    def _resize(self, new_capacity: int):
+        new_vecs = np.zeros((new_capacity, self.dim), dtype=self.dtype)
+        if self.vectors is not None and self.size > 0:
+            new_vecs[:self.size] = self.vectors[:self.size]
+        self.vectors = new_vecs
+        self.capacity = new_capacity
+
+    def __setitem__(self, node_id: int, vector: np.ndarray):
+        if self.vectors is None:
+            self._init_vectors(len(vector))
+        if node_id not in self.node_id_to_index:
+            if self.size >= self.capacity:
+                self._resize(self.capacity * 2)
+            idx = self.size
+            self.node_id_to_index[node_id] = idx
+            self.index_to_node_id[idx] = node_id
+            self.size += 1
+        else:
+            idx = self.node_id_to_index[node_id]
+        self.vectors[idx] = vector
+
+    def __getitem__(self, node_id: int) -> np.ndarray:
+        return self.vectors[self.node_id_to_index[node_id]]
+
+    def __delitem__(self, node_id: int):
+        if node_id in self.node_id_to_index:
+            idx = self.node_id_to_index[node_id]
+            del self.node_id_to_index[node_id]
+            if idx in self.index_to_node_id:
+                del self.index_to_node_id[idx]
+
+    def __contains__(self, node_id: int) -> bool:
+        return node_id in self.node_id_to_index
+
+    def __len__(self) -> int:
+        return len(self.node_id_to_index)
+
+    def values(self):
+        return [self.vectors[idx] for idx in self.node_id_to_index.values()]
+
+    def items(self):
+        return [(node_id, self.vectors[idx]) for node_id, idx in self.node_id_to_index.items()]
+
+    def get_matrix(self) -> np.ndarray:
+        if self.vectors is None or self.size == 0:
+            return np.empty((0, self.dim), dtype=self.dtype)
+        return self.vectors[:self.size]
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
 
 
 class VectorStore:
@@ -93,6 +186,7 @@ class VectorStore:
         self.dtype = dtype
         self.initial_capacity = initial_capacity
         self.node_id_to_index: Dict[int, int] = {}
+        self.index_to_node_id: Dict[int, int] = {}
         self.size = 0
         self.capacity = 0
         self.dim = 0
@@ -132,6 +226,7 @@ class VectorStore:
                 self._resize(self.capacity * 2)
             idx = self.size
             self.node_id_to_index[node_id] = idx
+            self.index_to_node_id[idx] = node_id
             self.size += 1
         else:
             idx = self.node_id_to_index[node_id]
@@ -142,11 +237,28 @@ class VectorStore:
 
     def __delitem__(self, node_id: int):
         if node_id in self.node_id_to_index:
+            idx = self.node_id_to_index[node_id]
             del self.node_id_to_index[node_id]
+            if idx in self.index_to_node_id:
+                del self.index_to_node_id[idx]
 
     def __contains__(self, node_id: int) -> bool:
         return node_id in self.node_id_to_index
+
+    def __len__(self) -> int:
+        return len(self.node_id_to_index)
         
+    def values(self):
+        return [self.mmap[idx] for idx in self.node_id_to_index.values()]
+
+    def items(self):
+        return [(node_id, self.mmap[idx]) for node_id, idx in self.node_id_to_index.items()]
+
+    def get_matrix(self) -> np.ndarray:
+        if self.mmap is None or self.size == 0:
+            return np.empty((0, self.dim), dtype=self.dtype)
+        return np.asarray(self.mmap[:self.size])
+
     def flush(self):
         if self.mmap is not None:
             self.mmap.flush()
@@ -254,8 +366,10 @@ class HNSWIndex:
         self.metric = metric
         if metric == "l2":
             self.distance_fn = l2_distance
+            self.metric_code = 0
         elif metric == "cosine":
             self.distance_fn = cosine_distance
+            self.metric_code = 1
         else:
             raise ValueError("metric must be 'l2' or 'cosine'")
         
@@ -270,12 +384,74 @@ class HNSWIndex:
             self.nodes = VectorStore(os.path.join(self.persist_dir, "vectors.bin"))
             self.wal = WALManager(os.path.join(self.persist_dir, "wal.log"), batch_size=self.config.wal_batch_size)
         else:
-            self.nodes: Dict[int, np.ndarray] = {}
+            self.nodes = ContiguousVectorStore()
             self.wal = None
             
         self.graphs: List[Dict[int, Set[int]]] = []
+        self.layer_edges: List[np.ndarray] = []
+        self.layer_degrees: List[np.ndarray] = []
         self.lock = RWLock()
         self.deleted_nodes: Set[int] = set()
+
+    def _ensure_graph_capacity(self, level: int):
+        while len(self.graphs) <= level:
+            self.graphs.append({})
+            M_max = self.config.M if len(self.graphs) > 1 else self.config.M * 2
+            cap = max(1000, self.nodes.capacity)
+            self.layer_edges.append(np.zeros((cap, M_max), dtype=np.int32))
+            self.layer_degrees.append(np.zeros(cap, dtype=np.int32))
+            
+        cap = self.nodes.capacity
+        for lc in range(len(self.layer_edges)):
+            if self.layer_edges[lc].shape[0] < cap:
+                M_max = self.layer_edges[lc].shape[1]
+                new_edges = np.zeros((cap, M_max), dtype=np.int32)
+                new_edges[:self.layer_edges[lc].shape[0]] = self.layer_edges[lc]
+                self.layer_edges[lc] = new_edges
+                
+                new_degrees = np.zeros(cap, dtype=np.int32)
+                new_degrees[:self.layer_degrees[lc].shape[0]] = self.layer_degrees[lc]
+                self.layer_degrees[lc] = new_degrees
+
+    def _update_node_edges(self, lc: int, node_id: int):
+        if lc >= len(self.layer_edges):
+            return
+        idx = self.nodes.node_id_to_index.get(node_id)
+        if idx is None:
+            return
+        edges_set = self.graphs[lc].get(node_id, set())
+        edges_indices = [self.nodes.node_id_to_index[n] for n in edges_set if n in self.nodes.node_id_to_index]
+        deg = len(edges_indices)
+        M_max = self.layer_edges[lc].shape[1]
+        if deg > M_max:
+            edges_indices = edges_indices[:M_max]
+            deg = M_max
+        if deg > 0:
+            self.layer_edges[lc][idx, :deg] = edges_indices
+        self.layer_degrees[lc][idx] = deg
+
+    def _rebuild_layer_arrays(self):
+        self.layer_edges = []
+        self.layer_degrees = []
+        cap = max(1000, self.nodes.capacity)
+        for lc, level_graph in enumerate(self.graphs):
+            M_max = self.config.M if lc > 0 else self.config.M * 2
+            edges = np.zeros((cap, M_max), dtype=np.int32)
+            degrees = np.zeros(cap, dtype=np.int32)
+            for node_id, nbr_set in level_graph.items():
+                idx = self.nodes.node_id_to_index.get(node_id)
+                if idx is None:
+                    continue
+                nbr_indices = [self.nodes.node_id_to_index[n] for n in nbr_set if n in self.nodes.node_id_to_index]
+                deg = len(nbr_indices)
+                if deg > M_max:
+                    nbr_indices = nbr_indices[:M_max]
+                    deg = M_max
+                if deg > 0:
+                    edges[idx, :deg] = nbr_indices
+                degrees[idx] = deg
+            self.layer_edges.append(edges)
+            self.layer_degrees.append(degrees)
 
     def save_snapshot(self, path: str = None):
         if path is None:
@@ -290,7 +466,7 @@ class HNSWIndex:
             self.nodes.flush()
             
         dim = 0
-        if isinstance(self.nodes, VectorStore):
+        if isinstance(self.nodes, (VectorStore, ContiguousVectorStore)):
             dim = self.nodes.dim
         elif len(self.nodes) > 0:
             dim = len(next(iter(self.nodes.values())))
@@ -300,7 +476,10 @@ class HNSWIndex:
                 "M": self.config.M,
                 "ef_construction": self.config.ef_construction,
                 "ef_search": self.config.ef_search,
-                "m_L": self.config.m_L
+                "m_L": self.config.m_L,
+                "heuristic": self.config.heuristic,
+                "extend_candidates": self.config.extend_candidates,
+                "keep_pruned_connections": self.config.keep_pruned_connections
             },
             "metric": self.metric,
             "max_level": self.max_level,
@@ -309,7 +488,7 @@ class HNSWIndex:
             "deleted_nodes": list(self.deleted_nodes)
         }
         
-        if isinstance(self.nodes, VectorStore):
+        if isinstance(self.nodes, (VectorStore, ContiguousVectorStore)):
             metadata["node_id_to_index"] = self.nodes.node_id_to_index
             metadata["size"] = self.nodes.size
             
@@ -353,8 +532,15 @@ class HNSWIndex:
         if persist_dir and isinstance(idx.nodes, VectorStore) and dim > 0:
             idx.nodes.dim = dim
             idx.nodes.node_id_to_index = {int(k): v for k, v in metadata.get("node_id_to_index", {}).items()}
+            idx.nodes.index_to_node_id = {v: k for k, v in idx.nodes.node_id_to_index.items()}
             idx.nodes.size = metadata.get("size", 0)
             idx.nodes._init_memmap(dim)
+        elif isinstance(idx.nodes, ContiguousVectorStore) and dim > 0:
+            idx.nodes.dim = dim
+            idx.nodes.node_id_to_index = {int(k): v for k, v in metadata.get("node_id_to_index", {}).items()}
+            idx.nodes.index_to_node_id = {v: k for k, v in idx.nodes.node_id_to_index.items()}
+            idx.nodes.size = metadata.get("size", 0)
+            idx.nodes._init_vectors(dim)
             
         idx.graphs = []
         graph_path = os.path.join(path, "graph.bin")
@@ -378,6 +564,8 @@ class HNSWIndex:
                                 level_graph[node_id] = set()
                         idx.graphs.append(level_graph)
                         
+        idx._rebuild_layer_arrays()
+        
         if idx.wal and dim > 0:
             idx.wal.replay(
                 insert_fn=lambda n, v, m: idx._replay_insert(n, v, m),
@@ -405,8 +593,8 @@ class HNSWIndex:
 
     def _batch_distance(self, query: np.ndarray, node_ids: List[int]) -> np.ndarray:
         if not node_ids:
-            return np.array([])
-        vecs = np.array([self.nodes[n] for n in node_ids])
+            return np.array([], dtype=np.float32)
+        vecs = np.array([self.nodes[n] for n in node_ids], dtype=np.float32)
         if self.metric == "l2":
             return np.linalg.norm(vecs - query, axis=1)
         elif self.metric == "cosine":
@@ -421,35 +609,51 @@ class HNSWIndex:
     def _get_random_level(self) -> int:
         return math.floor(-math.log(random.uniform(0.0, 1.0)) * self.config.m_L)
 
-    def insert(self, node_id: int, vector: np.ndarray, metadata: dict = None):
-        with self.lock.write():
-            if node_id in self.nodes and node_id not in self.deleted_nodes:
-                raise ValueError(f"Node {node_id} already exists in the index.")
-                
-            if self.wal:
-                self.wal.log_insert(node_id, vector, metadata)
+    def _insert_unlocked(self, node_id: int, vector: np.ndarray, metadata: dict = None):
+        if node_id in self.nodes and node_id not in self.deleted_nodes:
+            raise ValueError(f"Node {node_id} already exists in the index.")
             
-            self.nodes[node_id] = vector
-            if node_id in self.deleted_nodes:
-                self.deleted_nodes.remove(node_id)
-            if metadata:
-                self.metadata_store[node_id] = metadata
-            
-            if self.entry_point is None:
-                self.entry_point = node_id
-                self.max_level = self._get_random_level()
-                for _ in range(self.max_level + 1):
-                    self.graphs.append({node_id: set()})
-                return
-            
-            level = self._get_random_level()
-            
-            while len(self.graphs) <= level:
-                self.graphs.append({})
-                
-            curr_obj = self.entry_point
-            curr_dist = self.distance_fn(vector, self.nodes[curr_obj])
-            
+        if self.wal:
+            self.wal.log_insert(node_id, vector, metadata)
+        
+        vec_array = np.ascontiguousarray(vector, dtype=np.float32)
+        self.nodes[node_id] = vec_array
+        if node_id in self.deleted_nodes:
+            self.deleted_nodes.remove(node_id)
+        if metadata:
+            self.metadata_store[node_id] = metadata
+        
+        if self.entry_point is None:
+            self.entry_point = node_id
+            self.max_level = self._get_random_level()
+            self._ensure_graph_capacity(self.max_level)
+            for lc in range(self.max_level + 1):
+                self.graphs[lc][node_id] = set()
+                self._update_node_edges(lc, node_id)
+            return
+        
+        level = self._get_random_level()
+        self._ensure_graph_capacity(max(self.max_level, level))
+        
+        curr_obj = self.entry_point
+        curr_dist = self.distance_fn(vec_array, self.nodes[curr_obj])
+        
+        # Greedy descent through upper layers
+        if HAS_NATIVE and len(self.layer_edges) > 0 and self.max_level > level:
+            vec_matrix = self.nodes.get_matrix()
+            curr_idx = self.nodes.node_id_to_index[curr_obj]
+            for lc in range(self.max_level, level, -1):
+                curr_idx, curr_dist = greedy_search_layer_native(
+                    vec_array,
+                    curr_idx,
+                    curr_dist,
+                    vec_matrix,
+                    self.layer_edges[lc],
+                    self.layer_degrees[lc],
+                    self.metric_code
+                )
+            curr_obj = self.nodes.index_to_node_id[curr_idx]
+        else:
             for lc in range(self.max_level, level, -1):
                 changed = True
                 while changed:
@@ -458,42 +662,70 @@ class HNSWIndex:
                     if not neighbors:
                         continue
                         
-                    dists = self._batch_distance(vector, neighbors)
+                    dists = self._batch_distance(vec_array, neighbors)
                     min_idx = np.argmin(dists)
                     if dists[min_idx] < curr_dist:
                         curr_dist = float(dists[min_idx])
                         curr_obj = neighbors[min_idx]
                         changed = True
+        
+        entry_points = [curr_obj]
+        for lc in range(min(self.max_level, level), -1, -1):
+            if node_id not in self.graphs[lc]:
+                self.graphs[lc][node_id] = set()
+                
+            W = self._search_layer(vec_array, entry_points, self.config.ef_construction, lc)
             
-            entry_points = [curr_obj]
-            for lc in range(min(self.max_level, level), -1, -1):
-                if node_id not in self.graphs[lc]:
-                    self.graphs[lc][node_id] = set()
-                    
-                W = self._search_layer(vector, entry_points, self.config.ef_construction, lc)
+            M_max = self.config.M if lc > 0 else self.config.M * 2
+            neighbors = self._select_neighbors(vec_array, W, self.config.M)
+            
+            for n_id, n_dist in neighbors:
+                self.graphs[lc][node_id].add(n_id)
+                if n_id not in self.graphs[lc]:
+                    self.graphs[lc][n_id] = set()
+                self.graphs[lc][n_id].add(node_id)
+                self._update_node_edges(lc, n_id)
                 
-                M_max = self.config.M if lc > 0 else self.config.M * 2
-                neighbors = self._select_neighbors(W, self.config.M)
-                
-                for n_id, n_dist in neighbors:
-                    self.graphs[lc][node_id].add(n_id)
-                    if n_id not in self.graphs[lc]:
-                        self.graphs[lc][n_id] = set()
-                    self.graphs[lc][n_id].add(node_id)
-                    
-                    if len(self.graphs[lc][n_id]) > M_max:
-                        n_neighbors = [(v, self.distance_fn(self.nodes[n_id], self.nodes[v])) 
-                                       for v in self.graphs[lc][n_id]]
-                        n_neighbors_pruned = self._select_neighbors(n_neighbors, M_max)
-                        self.graphs[lc][n_id] = {v for v, _ in n_neighbors_pruned}
-                
-                entry_points = [n_id for n_id, _ in W]
+                if len(self.graphs[lc][n_id]) > M_max:
+                    n_neighbors = [(v, self.distance_fn(self.nodes[n_id], self.nodes[v])) 
+                                   for v in self.graphs[lc][n_id]]
+                    n_neighbors_pruned = self._select_neighbors(self.nodes[n_id], n_neighbors, M_max)
+                    self.graphs[lc][n_id] = {v for v, _ in n_neighbors_pruned}
+                    self._update_node_edges(lc, n_id)
+            
+            self._update_node_edges(lc, node_id)
+            entry_points = [n_id for n_id, _ in W]
 
-            if level > self.max_level:
-                for lc in range(self.max_level + 1, level + 1):
-                    self.graphs[lc][node_id] = set()
-                self.max_level = level
-                self.entry_point = node_id
+        if level > self.max_level:
+            for lc in range(self.max_level + 1, level + 1):
+                self.graphs[lc][node_id] = set()
+                self._update_node_edges(lc, node_id)
+            self.max_level = level
+            self.entry_point = node_id
+
+    def insert(self, node_id: int, vector: np.ndarray, metadata: dict = None):
+        with self.lock.write():
+            self._insert_unlocked(node_id, vector, metadata)
+
+    def batch_insert(self, vectors: np.ndarray, node_ids: List[int] = None, metadatas: List[dict] = None):
+        """
+        Batched vector insertion to amortize lock overhead and WAL synchronization.
+        """
+        n_vecs = len(vectors)
+        if n_vecs == 0:
+            return
+            
+        if node_ids is None:
+            start_id = len(self.nodes)
+            node_ids = list(range(start_id, start_id + n_vecs))
+            
+        with self.lock.write():
+            for i in range(n_vecs):
+                meta = metadatas[i] if metadatas and i < len(metadatas) else None
+                self._insert_unlocked(node_ids[i], vectors[i], meta)
+                
+            if self.wal:
+                self.wal.flush()
 
     def _matches_filter(self, node_id: int, filter_dict: dict) -> bool:
         if not filter_dict:
@@ -504,23 +736,38 @@ class HNSWIndex:
                 return False
         return True
 
-    def search(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None) -> List[Tuple[int, float, dict]]:
-        with self.lock.read():
-            if self.entry_point is None:
-                return []
+    def _search_unlocked(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None) -> List[Tuple[int, float, dict]]:
+        if self.entry_point is None:
+            return []
+        
+        if ef is None:
+            ef = self.config.ef_search
             
-            if ef is None:
-                ef = self.config.ef_search
-                
-            if filter_dict or self.deleted_nodes:
-                # Increase exploration if we need to post-filter
-                ef = max(ef, k * 5)
-            else:
-                ef = max(ef, k)
-                
-            curr_obj = self.entry_point
-            curr_dist = self.distance_fn(query, self.nodes[curr_obj])
+        if filter_dict or self.deleted_nodes:
+            ef = max(ef, k * 5)
+        else:
+            ef = max(ef, k)
             
+        query_c = np.ascontiguousarray(query, dtype=np.float32)
+        curr_obj = self.entry_point
+        curr_dist = self.distance_fn(query_c, self.nodes[curr_obj])
+        
+        # Greedy search in upper layers
+        if HAS_NATIVE and len(self.layer_edges) > 1 and self.max_level > 0:
+            vec_matrix = self.nodes.get_matrix()
+            curr_idx = self.nodes.node_id_to_index[curr_obj]
+            for lc in range(self.max_level, 0, -1):
+                curr_idx, curr_dist = greedy_search_layer_native(
+                    query_c,
+                    curr_idx,
+                    curr_dist,
+                    vec_matrix,
+                    self.layer_edges[lc],
+                    self.layer_degrees[lc],
+                    self.metric_code
+                )
+            curr_obj = self.nodes.index_to_node_id[curr_idx]
+        else:
             for lc in range(self.max_level, 0, -1):
                 changed = True
                 while changed:
@@ -529,29 +776,90 @@ class HNSWIndex:
                     if not neighbors:
                         continue
                         
-                    dists = self._batch_distance(query, neighbors)
+                    dists = self._batch_distance(query_c, neighbors)
                     min_idx = np.argmin(dists)
                     if dists[min_idx] < curr_dist:
                         curr_dist = float(dists[min_idx])
                         curr_obj = neighbors[min_idx]
                         changed = True
                             
-            W = self._search_layer(query, [curr_obj], ef, 0)
-            W.sort(key=lambda x: x[1])
-            
-            results = []
-            for n_id, dist in W:
-                if n_id in self.deleted_nodes:
-                    continue
-                if self._matches_filter(n_id, filter_dict):
-                    meta = self.metadata_store.get(n_id, {})
-                    results.append((n_id, dist, meta))
-                    if len(results) == k:
-                        break
+        W = self._search_layer(query_c, [curr_obj], ef, 0)
+        W.sort(key=lambda x: x[1])
+        
+        results = []
+        for n_id, dist in W:
+            if n_id in self.deleted_nodes:
+                continue
+            if self._matches_filter(n_id, filter_dict):
+                meta = self.metadata_store.get(n_id, {})
+                results.append((n_id, dist, meta))
+                if len(results) == k:
+                    break
                         
-            return results
+        return results
+
+    def search(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None) -> List[Tuple[int, float, dict]]:
+        with self.lock.read():
+            return self._search_unlocked(query, k=k, ef=ef, filter_dict=filter_dict)
+
+    def batch_search(
+        self,
+        queries: np.ndarray,
+        k: int = 10,
+        ef: int = None,
+        filter_dict: dict = None,
+        num_threads: int = None
+    ) -> List[List[Tuple[int, float, dict]]]:
+        """
+        Batched search across multiple query vectors.
+        Releases GIL in native hot path to execute searches concurrently across threads.
+        """
+        with self.lock.read():
+            if self.entry_point is None or len(queries) == 0:
+                return [[] for _ in range(len(queries))]
+                
+            queries_arr = np.ascontiguousarray(queries, dtype=np.float32)
+            n_queries = len(queries_arr)
+            
+            if n_queries == 1 or num_threads == 1:
+                return [self._search_unlocked(queries_arr[i], k=k, ef=ef, filter_dict=filter_dict) for i in range(n_queries)]
+                
+            workers = num_threads if num_threads is not None else min(32, os.cpu_count() or 4)
+            chunk_size = max(1, n_queries // (workers * 4))
+            chunks = [queries_arr[i:i+chunk_size] for i in range(0, n_queries, chunk_size)]
+            
+            def _search_chunk(chunk):
+                return [self._search_unlocked(q, k=k, ef=ef, filter_dict=filter_dict) for q in chunk]
+                
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                nested = list(executor.map(_search_chunk, chunks))
+                return [item for sublist in nested for item in sublist]
 
     def _search_layer(self, query: np.ndarray, entry_points: List[int], ef: int, layer: int) -> List[Tuple[int, float]]:
+        if HAS_NATIVE and len(self.layer_edges) > layer:
+            vec_matrix = self.nodes.get_matrix()
+            if len(vec_matrix) > 0 and len(entry_points) > 0:
+                ep_indices = np.array(
+                    [self.nodes.node_id_to_index[ep] for ep in entry_points if ep in self.nodes.node_id_to_index],
+                    dtype=np.int32
+                )
+                if len(ep_indices) > 0:
+                    query_c = np.ascontiguousarray(query, dtype=np.float32)
+                    raw_res = search_layer_native(
+                        query_c,
+                        ep_indices,
+                        ef,
+                        vec_matrix,
+                        self.layer_edges[layer],
+                        self.layer_degrees[layer],
+                        self.metric_code
+                    )
+                    idx_to_id = self.nodes.index_to_node_id
+                    return [(idx_to_id[idx], dist) for idx, dist in raw_res if idx in idx_to_id]
+
+        return self._search_layer_python(query, entry_points, ef, layer)
+
+    def _search_layer_python(self, query: np.ndarray, entry_points: List[int], ef: int, layer: int) -> List[Tuple[int, float]]:
         visited = set(entry_points)
         C = []
         W = []
@@ -595,9 +903,61 @@ class HNSWIndex:
                             
         return [(n_id, -d_neg) for d_neg, n_id in W]
 
-    def _select_neighbors(self, candidates: List[Tuple[int, float]], M: int) -> List[Tuple[int, float]]:
+    def _select_neighbors(self, base_vector: np.ndarray, candidates: List[Tuple[int, float]], M: int) -> List[Tuple[int, float]]:
+        if not self.config.heuristic:
+            candidates_sorted = sorted(candidates, key=lambda x: x[1])
+            return candidates_sorted[:M]
+            
+        # Diversity-aware heuristic (paper Algorithm 4)
+        if HAS_NATIVE:
+            vec_matrix = self.nodes.get_matrix()
+            cand_indices = [
+                (self.nodes.node_id_to_index[c_id], dist)
+                for c_id, dist in candidates if c_id in self.nodes.node_id_to_index
+            ]
+            base_c = np.ascontiguousarray(base_vector, dtype=np.float32)
+            raw_res = select_neighbors_heuristic_native(
+                base_c,
+                cand_indices,
+                M,
+                vec_matrix,
+                self.metric_code,
+                self.config.keep_pruned_connections
+            )
+            idx_to_id = self.nodes.index_to_node_id
+            return [(idx_to_id[idx], dist) for idx, dist in raw_res if idx in idx_to_id]
+
+        return self._select_neighbors_heuristic_python(base_vector, candidates, M)
+
+    def _select_neighbors_heuristic_python(self, base_vector: np.ndarray, candidates: List[Tuple[int, float]], M: int) -> List[Tuple[int, float]]:
         candidates_sorted = sorted(candidates, key=lambda x: x[1])
-        return candidates_sorted[:M]
+        R: List[Tuple[int, float]] = []
+        W_d: List[Tuple[int, float]] = []
+        
+        for cand in candidates_sorted:
+            if len(R) >= M:
+                break
+            e_id, dist_e_q = cand
+            e_vec = self.nodes[e_id]
+            is_diverse = True
+            for r_id, dist_r_q in R:
+                r_vec = self.nodes[r_id]
+                dist_e_r = self.distance_fn(e_vec, r_vec)
+                if dist_e_r < dist_e_q:
+                    is_diverse = False
+                    break
+            if is_diverse:
+                R.append(cand)
+            else:
+                W_d.append(cand)
+                
+        if self.config.keep_pruned_connections and len(R) < M:
+            for cand in W_d:
+                if len(R) >= M:
+                    break
+                R.append(cand)
+                
+        return R
 
     def delete(self, node_id: int):
         with self.lock.write():
@@ -610,26 +970,22 @@ class HNSWIndex:
             if node_id in self.metadata_store:
                 del self.metadata_store[node_id]
                 
-            # Tombstone deletion: we don't physically remove from self.nodes or self.graphs
-            # We just mark it as deleted so search() skips it.
             self.deleted_nodes.add(node_id)
 
     def compact(self):
         """
-        Physically removes tombstoned (deleted) vectors from the memmapped store, 
-        rebuilds affected graph regions, and reclaims disk space.
+        Physically removes tombstoned (deleted) vectors from the store, 
+        rebuilds affected graph regions, and reclaims space.
         """
         with self.lock.write():
             if not self.deleted_nodes:
                 return
 
             if isinstance(self.nodes, VectorStore):
-                # Create a new, compacted VectorStore
                 new_filepath = self.nodes.filepath + ".compact"
                 new_store = VectorStore(new_filepath, dtype=self.nodes.dtype, initial_capacity=self.nodes.capacity)
                 new_store._init_memmap(self.nodes.dim)
                 
-                # Copy active nodes
                 for node_id, idx in self.nodes.node_id_to_index.items():
                     if node_id not in self.deleted_nodes:
                         new_store[node_id] = self.nodes.mmap[idx]
@@ -641,6 +997,13 @@ class HNSWIndex:
                 os.rename(new_filepath, self.nodes.filepath)
                 new_store.filepath = self.nodes.filepath
                 new_store._init_memmap(self.nodes.dim)
+                self.nodes = new_store
+            elif isinstance(self.nodes, ContiguousVectorStore):
+                new_store = ContiguousVectorStore(initial_capacity=self.nodes.capacity, dtype=self.nodes.dtype)
+                new_store._init_vectors(self.nodes.dim)
+                for node_id, idx in self.nodes.node_id_to_index.items():
+                    if node_id not in self.deleted_nodes:
+                        new_store[node_id] = self.nodes.vectors[idx]
                 self.nodes = new_store
             else:
                 for node_id in self.deleted_nodes:
@@ -656,7 +1019,7 @@ class HNSWIndex:
                 for node_id, edges in self.graphs[lc].items():
                     self.graphs[lc][node_id] = {e for e in edges if e not in self.deleted_nodes}
 
-            # Update entry_point if the current one was deleted
+            # Update entry_point if current one was deleted
             if self.entry_point in self.deleted_nodes:
                 new_ep = None
                 for lc in range(self.max_level, -1, -1):
@@ -668,6 +1031,7 @@ class HNSWIndex:
                 self.entry_point = new_ep
 
             self.deleted_nodes.clear()
+            self._rebuild_layer_arrays()
 
             if self.wal:
                 self.wal.truncate()

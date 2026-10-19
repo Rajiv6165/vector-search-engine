@@ -8,3 +8,4 @@ httpx>=0.24,<1.0
 requests>=2.25,<3.0
 faiss-cpu>=1.7,<2.0
 matplotlib>=3.5,<4.0
+Cython>=3.0,<4.0
