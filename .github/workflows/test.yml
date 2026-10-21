@@ -24,10 +24,11 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        pip install -e .
+        pip install -v -e .
+        python -c "import vsearch.hnsw; print('HAS_NATIVE:', vsearch.hnsw.HAS_NATIVE)"
         
     - name: Test with pytest
       env:
         PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
       run: |
-        python -m pytest tests/ -v
+        python -m pytest tests/ -v --tb=short | tee pytest.log || (echo "### Pytest output" >> $GITHUB_STEP_SUMMARY && cat pytest.log >> $GITHUB_STEP_SUMMARY && exit 1)
