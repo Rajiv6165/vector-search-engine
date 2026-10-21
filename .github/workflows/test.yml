@@ -27,5 +27,7 @@ jobs:
         pip install -e .
         
     - name: Test with pytest
+      env:
+        PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
       run: |
-        pytest tests/ -v
+        python -m pytest tests/ -v
