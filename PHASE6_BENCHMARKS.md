@@ -27,11 +27,15 @@ This document details the performance evaluation of our custom `vsearch.HNSWInde
 
 | `efSearch` | Recall@10 | Recall@100 | QPS (1 thread) | p95 Latency |
 |----------|-----------|------------|----------------|-------------|
-| 10       | 88.69%    | 85.75%     | 306            | 4.37 ms     |
-| 20       | 88.69%    | 85.75%     | 303            | 4.47 ms     |
-| 50       | 88.69%    | 85.75%     | 284            | 5.25 ms     |
+| 10       | 88.69% *(clamped)* | 85.75% *(clamped)* | 306            | 4.37 ms     |
+| 20       | 88.69% *(clamped)* | 85.75% *(clamped)* | 303            | 4.47 ms     |
+| 50       | 88.69% *(clamped)* | 85.75% *(clamped)* | 284            | 5.25 ms     |
 | 100      | 88.69%    | 85.75%     | 276            | 5.19 ms     |
 | 200      | 89.44%    | 88.84%     | 169            | 8.01 ms     |
+
+> [!NOTE]
+> **Historical Artifact in Phase 6 Measurements (`efSearch` Clamping)**:
+> In the Phase 6 benchmark harness, queries were dispatched as `search(query, k=100, ef=ef)` so both Recall@10 and Recall@100 could be computed from a single result set. Because $k=100$, internal candidate evaluation clamped `ef = max(ef, k)` to **100** for all $ef \in [10, 20, 50, 100]$. This explains why Recall@10 (88.69%) and Recall@100 (85.75%) appeared flat across $ef=10, 20, 50, 100$. See [Phase 9 Performance Report](PHASE9_PERFORMANCE.md#62-investigation-root-cause-of-the-efsearch-clamping-artifact) for the full root-cause investigation and the corrected unclamped numbers.
 
 ## Tradeoff Curve
 ![Recall@10 vs QPS](benchmarks/faiss_tradeoff.png)

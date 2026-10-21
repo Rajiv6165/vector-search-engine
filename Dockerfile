@@ -17,6 +17,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Install requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy source and build native extension in virtual environment
+COPY . .
+RUN pip install --no-cache-dir .
+
 # Stage 2: Runtime
 FROM python:3.10-slim
 

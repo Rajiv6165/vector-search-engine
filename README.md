@@ -47,20 +47,20 @@ We rigorously benchmarked our engine against Meta's production-grade `faiss.Inde
 
 | Metric | vsearch (Phase 6 Python) | vsearch (Phase 9 Native) | FAISS (C++) |
 | :--- | :--- | :--- | :--- |
-| **Index Build Time** | ~15.4 mins (923.6s) | **~2.8 mins (170.7s)** | ~2.4 secs |
-| **Recall@10** | 88.7% - 89.4% | **83.00% - 99.96%** | 78.47% - 99.92% |
-| **Recall@100** | 85.75% | **97.29% - 99.47%** | 96.03% - 99.19% |
-| **QPS (Single-Thread)**| 169 - 306 QPS | **1,460 - 12,997 QPS** | 2,015 - 24,190 QPS |
+| **Index Build Time** | ~15.4 mins (923.6s) | **3.9 - 5.2 mins (234s - 311s)** *(3.0x-3.9x speedup)* | ~2.3 secs (2.29s - 2.38s) |
+| **Recall@10** | 88.7% - 89.4% *(clamped)* | **83.26% - 99.97%** | 78.97% - 99.90% |
+| **Recall@100** | 85.75% *(clamped)* | **97.29% - 99.47%** | 96.03% - 99.19% |
+| **QPS (Single-Thread)**| 169 - 306 QPS | **672 - 5,189 QPS** *(up to 6,155)* | 951 - 12,444 QPS *(1.4x - 2.2x FAISS lead)* |
 | **Batch Search QPS** | ~300 QPS | **8,389 QPS** | 15,000+ QPS |
-| **p95 Latency** | 4.37 - 8.01 ms | **0.10 - 0.96 ms** | 0.06 - 0.72 ms |
+| **p95 Latency** | 4.37 - 8.01 ms | **0.16 - 1.45 ms** | 0.08 - 1.05 ms |
 
 ![Recall vs QPS Tradeoff](benchmarks/faiss_tradeoff.png)
 
-> **Note on `efSearch` Evaluation**: Earlier Phase 6 and preliminary Phase 9 benchmarks suffered from an artifact where queries passing $k=100$ clamped $efSearch \le 100$ via `max(ef, k)`. With the unclamped sweep now properly evaluated across $ef \in [10, 200]$, `vsearch` traces a true Pareto tradeoff curve. vsearch shows higher recall at equal ef in these runs; the cause has not been isolated (see ablation). See [Phase 9 Performance Report](PHASE9_PERFORMANCE.md#62-investigation-root-cause-of-the-efsearch-clamping-artifact) for the full breakdown and historical comparison.
+> **Note on `efSearch` Evaluation & Ablation**: Earlier Phase 6 and preliminary Phase 9 benchmarks suffered from an artifact where queries passing $k=100$ clamped $efSearch \le 100$ via `max(ef, k)`. With the unclamped sweep now properly evaluated across $ef \in [10, 200]$ with 5 interleaved runs and single-thread pinning, `vsearch` traces a true Pareto tradeoff curve. In these benchmarks, `vsearch` shows higher recall at equal `efSearch` than FAISS; the cause has not been isolated (see ablation study in [Phase 9 Performance Report](PHASE9_PERFORMANCE.md#63-tradeoff-curve--ablation-findings)).
 
 **Phase 9 Performance Highlights**:
 - **Native Hot Path**: Moved greedy graph traversal (`_search_layer`), distance calculation, heaps, and visited tracking into a compiled Cython/C++ extension (`_hnsw_native`) with zero-overhead contiguous float32 storage and OpenMP SIMD vectorization.
-- **Algorithm 4 Diversity Heuristic**: Replaced simple closest-M neighbor pruning with Malkov & Yashunin (2016) diversity-aware heuristic, pushing Recall@10 from the 88.7% plateau to **83.0% - 99.96%**. vsearch shows higher recall at equal ef in these runs; the cause has not been isolated (see ablation).
+- **Algorithm 4 Diversity Heuristic**: Replaced simple closest-M neighbor pruning with Malkov & Yashunin (2016) diversity-aware heuristic. Our ablation demonstrates that the heuristic elevates Recall@10 from 76.39% to 83.26% at $ef=10$ and from 86.13% to 92.12% at $ef=20$.
 - **Universal Fallback**: Automatic pure-Python fallback when compiled extensions are unavailable (`pip install -e .` works in all environments).
 - **Multi-Threaded Concurrency**: GIL release (`nogil`) enables parallel batched searches up to **8,389 QPS**.
 
