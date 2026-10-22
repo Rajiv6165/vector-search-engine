@@ -1,3 +1,4 @@
+import random
 import numpy as np
 import pytest
 from vsearch.hnsw import HNSWIndex, HNSWConfig, HAS_NATIVE
@@ -8,6 +9,7 @@ def test_ef_search_recall_and_visited_growth():
     1. A meaningful margin in recall@10 (ef=10 must be lower than ef=100).
     2. The number of visited nodes grows with ef (ef=100 visits strictly more nodes).
     """
+    random.seed(42)
     np.random.seed(42)
     dim = 32
     num_nodes = 1000
@@ -23,8 +25,9 @@ def test_ef_search_recall_and_visited_growth():
 
     queries = np.random.randn(num_queries, dim).astype(np.float32)
 
-    config = HNSWConfig(M=16, ef_construction=100, heuristic=True)
+    config = HNSWConfig(M=16, ef_construction=100, heuristic=True, seed=42)
     index = HNSWIndex(config=config, metric="l2")
+    index.seed_level_generator(42)
     index.batch_insert(data)
 
     # Compute exact ground truth top-10
@@ -70,6 +73,8 @@ def test_ef_search_recall_and_visited_growth():
 
 def test_pure_python_ef_search_scaling():
     """Verify that pure-Python fallback also scales visited count and recall with ef."""
+    # Seed every RNG: python random, numpy, and index level generator
+    random.seed(123)
     np.random.seed(123)
     dim = 16
     num_nodes = 500
@@ -83,8 +88,9 @@ def test_pure_python_ef_search_scaling():
     data = np.array(data, dtype=np.float32)
     queries = np.random.randn(num_queries, dim).astype(np.float32)
 
-    config = HNSWConfig(M=8, ef_construction=50, heuristic=False)
+    config = HNSWConfig(M=8, ef_construction=50, heuristic=False, seed=123)
     index = HNSWIndex(config=config, metric="l2")
+    index.seed_level_generator(123)
     index.batch_insert(data)
 
     dists = np.linalg.norm(data[None, :, :] - queries[:, None, :], axis=2)
@@ -96,10 +102,8 @@ def test_pure_python_ef_search_scaling():
     r100 = []
 
     for i, q in enumerate(queries):
-        res10, v10 = index._search_layer_python(q, [index.entry_point], ef=10, layer=0, return_visited=True)
-        res100, v100 = index._search_layer_python(q, [index.entry_point], ef=100, layer=0, return_visited=True)
-        res10.sort(key=lambda x: x[1])
-        res100.sort(key=lambda x: x[1])
+        res10, v10 = index.search(q, k=10, ef=10, return_visited=True, use_native=False)
+        res100, v100 = index.search(q, k=10, ef=100, return_visited=True, use_native=False)
 
         v10_tot += v10
         v100_tot += v100
@@ -108,5 +112,15 @@ def test_pure_python_ef_search_scaling():
         r10.append(len(gt_set.intersection(set(x[0] for x in res10[:10]))) / 10.0)
         r100.append(len(gt_set.intersection(set(x[0] for x in res100[:10]))) / 10.0)
 
-    assert np.mean(r10) < np.mean(r100)
-    assert v100_tot > v10_tot * 1.3
+    mean_r10 = float(np.mean(r10))
+    mean_r100 = float(np.mean(r100))
+
+    assert mean_r10 < mean_r100, (
+        f"Expected ef=10 recall ({mean_r10:.4f}) to be strictly lower than ef=100 recall ({mean_r100:.4f})"
+    )
+    assert mean_r100 >= 0.8, (
+        f"Expected recall@10 at ef=100 to be >= 0.8, got {mean_r100:.4f}"
+    )
+    assert v100_tot > v10_tot * 1.3, (
+        f"Expected visited count at ef=100 ({v100_tot}) to be > 1.3x ef=10 ({v10_tot})"
+    )

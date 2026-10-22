@@ -97,6 +97,8 @@ class HNSWConfig:
     heuristic: bool = True # Paper Algorithm 4 diversity-aware heuristic neighbor selection
     extend_candidates: bool = False
     keep_pruned_connections: bool = True
+    use_native: bool = True
+    seed: Optional[int] = None
 
     def __post_init__(self):
         if self.m_L is None:
@@ -361,8 +363,8 @@ class WALManager:
 
 
 class HNSWIndex:
-    def __init__(self, config: HNSWConfig = HNSWConfig(), metric: str = "l2", persist_dir: str = None):
-        self.config = config
+    def __init__(self, config: HNSWConfig = None, metric: str = "l2", persist_dir: str = None):
+        self.config = config if config is not None else HNSWConfig()
         self.metric = metric
         if metric == "l2":
             self.distance_fn = l2_distance
@@ -377,6 +379,9 @@ class HNSWIndex:
         self.max_level = -1
         self.entry_point = None
         self.metadata_store: Dict[int, dict] = {}
+        
+        self.use_native = self.config.use_native and HAS_NATIVE
+        self.rng = random.Random(self.config.seed) if self.config.seed is not None else random
         
         if self.persist_dir:
             if not os.path.exists(self.persist_dir):
@@ -393,6 +398,10 @@ class HNSWIndex:
         self.lock = RWLock()
         self.deleted_nodes: Set[int] = set()
         self.last_visited_count: int = 0
+
+    def seed_level_generator(self, seed: int):
+        """Seed the level generator RNG for deterministic index construction."""
+        self.rng = random.Random(seed)
 
     def _ensure_graph_capacity(self, level: int):
         while len(self.graphs) <= level:
@@ -608,7 +617,7 @@ class HNSWIndex:
             return 1.0 - (dots / norms)
 
     def _get_random_level(self) -> int:
-        return math.floor(-math.log(random.uniform(0.0, 1.0)) * self.config.m_L)
+        return math.floor(-math.log(self.rng.uniform(0.0, 1.0)) * self.config.m_L)
 
     def _insert_unlocked(self, node_id: int, vector: np.ndarray, metadata: dict = None):
         if node_id in self.nodes and node_id not in self.deleted_nodes:
@@ -640,7 +649,7 @@ class HNSWIndex:
         curr_dist = self.distance_fn(vec_array, self.nodes[curr_obj])
         
         # Greedy descent through upper layers
-        if HAS_NATIVE and len(self.layer_edges) > 0 and self.max_level > level:
+        if self.use_native and len(self.layer_edges) > 0 and self.max_level > level:
             vec_matrix = self.nodes.get_matrix()
             curr_idx = self.nodes.node_id_to_index[curr_obj]
             for lc in range(self.max_level, level, -1):
@@ -737,7 +746,7 @@ class HNSWIndex:
                 return False
         return True
 
-    def _search_unlocked(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None, return_visited: bool = False):
+    def _search_unlocked(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None, return_visited: bool = False, use_native: bool = None):
         if self.entry_point is None:
             return ([], 0) if return_visited else []
         
@@ -745,13 +754,14 @@ class HNSWIndex:
             ef = self.config.ef_search
             
         ef = max(ef, k)
+        active_use_native = self.use_native if use_native is None else (use_native and HAS_NATIVE)
             
         query_c = np.ascontiguousarray(query, dtype=np.float32)
         curr_obj = self.entry_point
         curr_dist = self.distance_fn(query_c, self.nodes[curr_obj])
         
         # Greedy search in upper layers
-        if HAS_NATIVE and len(self.layer_edges) > 1 and self.max_level > 0:
+        if active_use_native and len(self.layer_edges) > 1 and self.max_level > 0:
             vec_matrix = self.nodes.get_matrix()
             curr_idx = self.nodes.node_id_to_index[curr_obj]
             for lc in range(self.max_level, 0, -1):
@@ -782,10 +792,10 @@ class HNSWIndex:
                         changed = True
                             
         if return_visited:
-            W, visited_count = self._search_layer(query_c, [curr_obj], ef, 0, return_visited=True)
+            W, visited_count = self._search_layer(query_c, [curr_obj], ef, 0, return_visited=True, use_native=active_use_native)
             self.last_visited_count = visited_count
         else:
-            W = self._search_layer(query_c, [curr_obj], ef, 0, return_visited=False)
+            W = self._search_layer(query_c, [curr_obj], ef, 0, return_visited=False, use_native=active_use_native)
             self.last_visited_count = 0
             visited_count = 0
 
@@ -805,9 +815,9 @@ class HNSWIndex:
             return results, visited_count
         return results
 
-    def search(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None, return_visited: bool = False):
+    def search(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None, return_visited: bool = False, use_native: bool = None):
         with self.lock.read():
-            return self._search_unlocked(query, k=k, ef=ef, filter_dict=filter_dict, return_visited=return_visited)
+            return self._search_unlocked(query, k=k, ef=ef, filter_dict=filter_dict, return_visited=return_visited, use_native=use_native)
 
     def batch_search(
         self,
@@ -816,7 +826,8 @@ class HNSWIndex:
         ef: int = None,
         filter_dict: dict = None,
         num_threads: int = None,
-        return_visited: bool = False
+        return_visited: bool = False,
+        use_native: bool = None
     ):
         """
         Batched search across multiple query vectors.
@@ -830,21 +841,22 @@ class HNSWIndex:
             n_queries = len(queries_arr)
             
             if n_queries == 1 or num_threads == 1:
-                return [self._search_unlocked(queries_arr[i], k=k, ef=ef, filter_dict=filter_dict, return_visited=return_visited) for i in range(n_queries)]
+                return [self._search_unlocked(queries_arr[i], k=k, ef=ef, filter_dict=filter_dict, return_visited=return_visited, use_native=use_native) for i in range(n_queries)]
                 
             workers = num_threads if num_threads is not None else min(32, os.cpu_count() or 4)
             chunk_size = max(1, n_queries // (workers * 4))
             chunks = [queries_arr[i:i+chunk_size] for i in range(0, n_queries, chunk_size)]
             
             def _search_chunk(chunk):
-                return [self._search_unlocked(q, k=k, ef=ef, filter_dict=filter_dict, return_visited=return_visited) for q in chunk]
+                return [self._search_unlocked(q, k=k, ef=ef, filter_dict=filter_dict, return_visited=return_visited, use_native=use_native) for q in chunk]
                 
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 nested = list(executor.map(_search_chunk, chunks))
                 return [item for sublist in nested for item in sublist]
 
-    def _search_layer(self, query: np.ndarray, entry_points: List[int], ef: int, layer: int, return_visited: bool = False):
-        if HAS_NATIVE and len(self.layer_edges) > layer:
+    def _search_layer(self, query: np.ndarray, entry_points: List[int], ef: int, layer: int, return_visited: bool = False, use_native: bool = None):
+        active_use_native = self.use_native if use_native is None else (use_native and HAS_NATIVE)
+        if active_use_native and len(self.layer_edges) > layer:
             vec_matrix = self.nodes.get_matrix()
             if len(vec_matrix) > 0 and len(entry_points) > 0:
                 ep_indices = np.array(
@@ -935,7 +947,7 @@ class HNSWIndex:
             return candidates_sorted[:M]
             
         # Diversity-aware heuristic (paper Algorithm 4)
-        if HAS_NATIVE:
+        if self.use_native:
             vec_matrix = self.nodes.get_matrix()
             cand_indices = [
                 (self.nodes.node_id_to_index[c_id], dist)

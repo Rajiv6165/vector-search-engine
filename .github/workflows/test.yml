@@ -10,6 +10,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.14"]
     steps:
@@ -28,7 +29,5 @@ jobs:
         python -c "import vsearch.hnsw; print('HAS_NATIVE:', vsearch.hnsw.HAS_NATIVE)"
         
     - name: Test with pytest
-      env:
-        PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
       run: |
         python -m pytest tests/ -v --tb=short | tee pytest.log || (echo "### Pytest output" >> $GITHUB_STEP_SUMMARY && cat pytest.log >> $GITHUB_STEP_SUMMARY && exit 1)
