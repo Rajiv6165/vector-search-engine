@@ -85,3 +85,64 @@ def test_heuristic_neighbor_selection_diversity():
 
     assert len(res_h) == 5
     assert len(res_s) == 5
+
+def test_native_vs_python_filtered_search_identical():
+    """Assert native and pure-Python paths produce identical filtered search results on the same graph."""
+    assert HAS_NATIVE, "Native compiled extension must be available for comparison test"
+
+    np.random.seed(42)
+    dim = 16
+    num_nodes = 400
+    num_queries = 10
+
+    data = np.random.randn(num_nodes, dim).astype(np.float32)
+    queries = np.random.randn(num_queries, dim).astype(np.float32)
+
+    config = HNSWConfig(M=16, ef_construction=100, ef_search=50, heuristic=True)
+    index = HNSWIndex(config=config, metric="l2")
+
+    categories = ["electronics", "apparel", "books", "home"]
+    ratings = [1, 2, 3, 4, 5]
+
+    for i in range(num_nodes):
+        meta = {
+            "category": categories[i % len(categories)],
+            "rating": ratings[i % len(ratings)],
+            "even": (i % 2 == 0)
+        }
+        index.insert(i, data[i], metadata=meta)
+
+    # Test 1: In-graph traversal path (force threshold low so it runs in-graph)
+    index.filter_fallback_threshold = 10  # 100 matching nodes > 10 => in-graph
+    test_filter = {"category": "electronics"}
+    
+    for q in queries:
+        native_res = index.search(q, k=10, ef=50, filter_dict=test_filter, use_native=True)
+        py_res = index.search(q, k=10, ef=50, filter_dict=test_filter, use_native=False)
+
+        assert len(native_res) == len(py_res)
+        for (nat_id, nat_dist, nat_meta), (py_id, py_dist, py_meta) in zip(native_res, py_res):
+            assert nat_id == py_id, f"In-graph mismatch: {nat_id} vs {py_id}"
+            assert abs(nat_dist - py_dist) < 1e-4
+            assert nat_meta["category"] == "electronics"
+            assert py_meta["category"] == "electronics"
+
+    # Test 2: Fallback brute-force path (threshold high so it uses fallback)
+    index.filter_fallback_threshold = 1000  # 100 matching nodes <= 1000 => fallback
+    for q in queries:
+        native_res = index.search(q, k=10, ef=50, filter_dict=test_filter, use_native=True)
+        py_res = index.search(q, k=10, ef=50, filter_dict=test_filter, use_native=False)
+
+        assert len(native_res) == len(py_res)
+        for (nat_id, nat_dist, nat_meta), (py_id, py_dist, py_meta) in zip(native_res, py_res):
+            assert nat_id == py_id, f"Fallback mismatch: {nat_id} vs {py_id}"
+            assert abs(nat_dist - py_dist) < 1e-4
+
+    # Test 3: Multi-field AND filter
+    multi_filter = {"category": "electronics", "rating": 5}
+    index.filter_fallback_threshold = 0  # Force in-graph
+    for q in queries:
+        res = index.search(q, k=5, ef=50, filter_dict=multi_filter, use_native=True)
+        for _, _, meta in res:
+            assert meta["category"] == "electronics"
+            assert meta["rating"] == 5

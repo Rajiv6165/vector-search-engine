@@ -4,8 +4,9 @@ import heapq
 import os
 import json
 import struct
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import List, Tuple, Dict, Set, Callable, Optional, Union
+from typing import List, Tuple, Dict, Set, Callable, Optional, Union, Any
 import numpy as np
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -362,6 +363,67 @@ class WALManager:
                     raise ValueError(f"Corrupt WAL: unknown op {op}")
 
 
+class MetadataIndex:
+    """
+    Inverted index mapping (field, value) -> set of node_ids.
+    Supports multi-field AND equality filtering.
+    """
+    def __init__(self):
+        self._index: Dict[str, Dict[Any, Set[int]]] = defaultdict(lambda: defaultdict(set))
+        self._node_metadata: Dict[int, dict] = {}
+
+    def insert(self, node_id: int, metadata: Optional[dict]):
+        if not metadata:
+            return
+        if node_id in self._node_metadata:
+            self.delete(node_id)
+        self._node_metadata[node_id] = metadata
+        for field, val in metadata.items():
+            self._index[field][val].add(node_id)
+
+    def delete(self, node_id: int):
+        meta = self._node_metadata.pop(node_id, None)
+        if meta:
+            for field, val in meta.items():
+                val_dict = self._index.get(field)
+                if val_dict and val in val_dict:
+                    val_dict[val].discard(node_id)
+                    if not val_dict[val]:
+                        del val_dict[val]
+
+    def get_matching_ids(self, filter_dict: Optional[dict]) -> Optional[Set[int]]:
+        """
+        Returns set of node_ids matching all equality conditions in filter_dict (AND logic).
+        Returns None if filter_dict is None or empty.
+        """
+        if not filter_dict:
+            return None
+        matching_sets = []
+        for field, val in filter_dict.items():
+            val_dict = self._index.get(field)
+            if not val_dict or val not in val_dict:
+                return set()
+            matching_sets.append(val_dict[val])
+        
+        matching_sets.sort(key=len)
+        result = set(matching_sets[0])
+        for s in matching_sets[1:]:
+            result.intersection_update(s)
+            if not result:
+                break
+        return result
+
+    def rebuild(self, metadata_store: Dict[int, dict], deleted_nodes: Set[int]):
+        self.clear()
+        for node_id, meta in metadata_store.items():
+            if node_id not in deleted_nodes:
+                self.insert(node_id, meta)
+
+    def clear(self):
+        self._index.clear()
+        self._node_metadata.clear()
+
+
 class HNSWIndex:
     def __init__(self, config: HNSWConfig = None, metric: str = "l2", persist_dir: str = None):
         self.config = config if config is not None else HNSWConfig()
@@ -379,6 +441,8 @@ class HNSWIndex:
         self.max_level = -1
         self.entry_point = None
         self.metadata_store: Dict[int, dict] = {}
+        self.metadata_index = MetadataIndex()
+        self.filter_fallback_threshold = 1000
         
         self.use_native = self.config.use_native and HAS_NATIVE
         self.rng = random.Random(self.config.seed) if self.config.seed is not None else random
@@ -398,6 +462,8 @@ class HNSWIndex:
         self.lock = RWLock()
         self.deleted_nodes: Set[int] = set()
         self.last_visited_count: int = 0
+        self.filter_fallback_threshold: int = 2000
+        self._filter_cache: Dict[Tuple, dict] = {}
 
     def seed_level_generator(self, seed: int):
         """Seed the level generator RNG for deterministic index construction."""
@@ -507,6 +573,17 @@ class HNSWIndex:
             
         with open(os.path.join(path, "metadata_store.json"), "w") as f:
             json.dump(self.metadata_store, f)
+
+        vec_file = os.path.join(path, "vectors.bin")
+        if isinstance(self.nodes, VectorStore):
+            self.nodes.mmap.flush()
+            if os.path.abspath(self.nodes.filepath) != os.path.abspath(vec_file):
+                import shutil
+                shutil.copyfile(self.nodes.filepath, vec_file)
+        elif isinstance(self.nodes, ContiguousVectorStore):
+            if self.nodes.vectors is not None:
+                with open(vec_file, "wb") as f:
+                    f.write(self.nodes.vectors[:self.nodes.size].tobytes())
             
         with open(os.path.join(path, "graph.bin"), "wb") as f:
             f.write(struct.pack('<I', len(self.graphs)))
@@ -538,19 +615,29 @@ class HNSWIndex:
             with open(meta_store_path, "r") as f:
                 raw_store = json.load(f)
                 idx.metadata_store = {int(k): v for k, v in raw_store.items()}
+        idx.metadata_index.rebuild(idx.metadata_store, idx.deleted_nodes)
         
+        vec_file = os.path.join(path, "vectors.bin")
         if persist_dir and isinstance(idx.nodes, VectorStore) and dim > 0:
             idx.nodes.dim = dim
             idx.nodes.node_id_to_index = {int(k): v for k, v in metadata.get("node_id_to_index", {}).items()}
             idx.nodes.index_to_node_id = {v: k for k, v in idx.nodes.node_id_to_index.items()}
             idx.nodes.size = metadata.get("size", 0)
+            target_vec_file = os.path.join(persist_dir, "vectors.bin")
+            if os.path.exists(vec_file) and os.path.abspath(vec_file) != os.path.abspath(target_vec_file):
+                import shutil
+                shutil.copyfile(vec_file, target_vec_file)
             idx.nodes._init_memmap(dim)
         elif isinstance(idx.nodes, ContiguousVectorStore) and dim > 0:
             idx.nodes.dim = dim
             idx.nodes.node_id_to_index = {int(k): v for k, v in metadata.get("node_id_to_index", {}).items()}
             idx.nodes.index_to_node_id = {v: k for k, v in idx.nodes.node_id_to_index.items()}
             idx.nodes.size = metadata.get("size", 0)
-            idx.nodes._init_vectors(dim)
+            if os.path.exists(vec_file):
+                idx.nodes.vectors = np.fromfile(vec_file, dtype=np.float32).reshape(-1, dim).copy()
+                idx.nodes.capacity = len(idx.nodes.vectors)
+            else:
+                idx.nodes._init_vectors(dim)
             
         idx.graphs = []
         graph_path = os.path.join(path, "graph.bin")
@@ -632,6 +719,8 @@ class HNSWIndex:
             self.deleted_nodes.remove(node_id)
         if metadata:
             self.metadata_store[node_id] = metadata
+            self.metadata_index.insert(node_id, metadata)
+        self._update_filter_cache_on_insert(node_id, metadata)
         
         if self.entry_point is None:
             self.entry_point = node_id
@@ -746,6 +835,145 @@ class HNSWIndex:
                 return False
         return True
 
+    def _search_brute_force_matching(
+        self,
+        query: np.ndarray,
+        matching_ids: Set[int],
+        k: int,
+        return_visited: bool = False,
+        matching_indices: np.ndarray = None,
+        active_matching_ids: List[int] = None
+    ):
+        if matching_indices is None or active_matching_ids is None:
+            active_matching = [nid for nid in matching_ids if nid not in self.deleted_nodes and nid in self.nodes]
+            if not active_matching:
+                return ([], 0) if return_visited else []
+            active_matching_ids = active_matching
+            id_to_idx = self.nodes.node_id_to_index
+            matching_indices = np.array([id_to_idx[nid] for nid in active_matching if nid in id_to_idx and id_to_idx[nid] < len(self.nodes)], dtype=np.int32)
+        else:
+            if len(matching_indices) == 0:
+                return ([], 0) if return_visited else []
+        
+        query_c = np.ascontiguousarray(query, dtype=np.float32)
+        if self.use_native:
+            vec_matrix = self.nodes.get_matrix()[matching_indices]
+            if self.metric_code == 0:  # L2
+                diff = vec_matrix - query_c
+                dists = np.sqrt(np.sum(diff * diff, axis=1))
+            else:  # Cosine
+                q_norm = np.linalg.norm(query_c)
+                mat_norms = np.linalg.norm(vec_matrix, axis=1)
+                dots = np.dot(vec_matrix, query_c)
+                dists = 1.0 - dots / (mat_norms * q_norm + 1e-10)
+        else:
+            dists = np.array([self.distance_fn(query_c, self.nodes[nid]) for nid in active_matching_ids], dtype=np.float32)
+            
+        n_take = min(k, len(active_matching_ids))
+        top_k_subidx = np.argsort(dists)[:n_take]
+            
+        results = [
+            (active_matching_ids[idx], float(dists[idx]), self.metadata_store.get(active_matching_ids[idx], {}))
+            for idx in top_k_subidx
+        ]
+        visited_count = len(active_matching_ids)
+        if return_visited:
+            return results, visited_count
+        return results
+
+    def _get_cached_filter(self, filter_dict: dict) -> Optional[dict]:
+        if not filter_dict:
+            return None
+        cache_key = tuple(sorted(filter_dict.items()))
+        num_vectors = self.nodes.get_matrix().shape[0]
+        entry = self._filter_cache.get(cache_key)
+        
+        if entry is None or entry["allowed_mask"] is None or len(entry["allowed_mask"]) < num_vectors:
+            raw_matching_ids = self.metadata_index.get_matching_ids(filter_dict)
+            if raw_matching_ids is None:
+                return None
+            
+            allowed_set = {nid for nid in raw_matching_ids if nid not in self.deleted_nodes}
+            allowed_mask = np.zeros(num_vectors, dtype=np.uint8)
+            id_to_idx = self.nodes.node_id_to_index
+            active_matching_ids = []
+            matching_indices_list = []
+            
+            for nid in allowed_set:
+                idx = id_to_idx.get(nid)
+                if idx is not None and idx < num_vectors:
+                    allowed_mask[idx] = 1
+                    matching_indices_list.append(idx)
+                    active_matching_ids.append(nid)
+            
+            matching_indices = np.array(matching_indices_list, dtype=np.int32)
+            entry = {
+                "matching_ids": raw_matching_ids,
+                "allowed_set": allowed_set,
+                "allowed_mask": allowed_mask,
+                "matching_indices": matching_indices,
+                "active_matching_ids": active_matching_ids
+            }
+            self._filter_cache[cache_key] = entry
+        else:
+            if entry["matching_indices"] is None or entry["active_matching_ids"] is None:
+                id_to_idx = self.nodes.node_id_to_index
+                active_matching_ids = []
+                matching_indices_list = []
+                for nid in entry["allowed_set"]:
+                    idx = id_to_idx.get(nid)
+                    if idx is not None and idx < num_vectors:
+                        matching_indices_list.append(idx)
+                        active_matching_ids.append(nid)
+                entry["matching_indices"] = np.array(matching_indices_list, dtype=np.int32)
+                entry["active_matching_ids"] = active_matching_ids
+                
+        return entry
+
+    def _update_filter_cache_on_insert(self, node_id: int, metadata: Optional[dict]):
+        if not self._filter_cache:
+            return
+        idx = self.nodes.node_id_to_index.get(node_id)
+        num_vectors = self.nodes.get_matrix().shape[0]
+        
+        for cache_key, entry in list(self._filter_cache.items()):
+            filter_dict = dict(cache_key)
+            matches = False
+            if metadata:
+                matches = all(metadata.get(k) == v for k, v in filter_dict.items())
+            
+            if entry["allowed_mask"] is not None and len(entry["allowed_mask"]) < num_vectors:
+                new_mask = np.zeros(num_vectors, dtype=np.uint8)
+                new_mask[:len(entry["allowed_mask"])] = entry["allowed_mask"]
+                entry["allowed_mask"] = new_mask
+                
+            if matches:
+                entry["matching_ids"].add(node_id)
+                if node_id not in self.deleted_nodes:
+                    entry["allowed_set"].add(node_id)
+                    if idx is not None and entry["allowed_mask"] is not None and idx < len(entry["allowed_mask"]):
+                        entry["allowed_mask"][idx] = 1
+                    entry["matching_indices"] = None
+                    entry["active_matching_ids"] = None
+            else:
+                entry["matching_ids"].discard(node_id)
+                entry["allowed_set"].discard(node_id)
+                if idx is not None and entry["allowed_mask"] is not None and idx < len(entry["allowed_mask"]):
+                    entry["allowed_mask"][idx] = 0
+                entry["matching_indices"] = None
+                entry["active_matching_ids"] = None
+
+    def _update_filter_cache_on_delete(self, node_id: int):
+        if not self._filter_cache:
+            return
+        idx = self.nodes.node_id_to_index.get(node_id)
+        for entry in self._filter_cache.values():
+            entry["allowed_set"].discard(node_id)
+            if idx is not None and entry["allowed_mask"] is not None and idx < len(entry["allowed_mask"]):
+                entry["allowed_mask"][idx] = 0
+            entry["matching_indices"] = None
+            entry["active_matching_ids"] = None
+
     def _search_unlocked(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None, return_visited: bool = False, use_native: bool = None):
         if self.entry_point is None:
             return ([], 0) if return_visited else []
@@ -755,8 +983,34 @@ class HNSWIndex:
             
         ef = max(ef, k)
         active_use_native = self.use_native if use_native is None else (use_native and HAS_NATIVE)
-            
         query_c = np.ascontiguousarray(query, dtype=np.float32)
+        
+        matching_ids = None
+        allowed_set = None
+        allowed_mask = None
+        matching_indices = None
+        active_matching_ids = None
+        
+        if filter_dict:
+            cache_entry = self._get_cached_filter(filter_dict)
+            if cache_entry is None or len(cache_entry["allowed_set"]) == 0:
+                return ([], 0) if return_visited else []
+            
+            allowed_set = cache_entry["allowed_set"]
+            allowed_mask = cache_entry["allowed_mask"] if active_use_native else None
+            matching_indices = cache_entry["matching_indices"]
+            active_matching_ids = cache_entry["active_matching_ids"]
+            num_matching = len(allowed_set)
+            
+            # Selectivity-aware fallback:
+            if num_matching <= self.filter_fallback_threshold:
+                return self._search_brute_force_matching(
+                    query_c, allowed_set, k,
+                    return_visited=return_visited,
+                    matching_indices=matching_indices,
+                    active_matching_ids=active_matching_ids
+                )
+
         curr_obj = self.entry_point
         curr_dist = self.distance_fn(query_c, self.nodes[curr_obj])
         
@@ -790,26 +1044,53 @@ class HNSWIndex:
                         curr_dist = float(dists[min_idx])
                         curr_obj = neighbors[min_idx]
                         changed = True
-                            
-        if return_visited:
-            W, visited_count = self._search_layer(query_c, [curr_obj], ef, 0, return_visited=True, use_native=active_use_native)
-            self.last_visited_count = visited_count
-        else:
-            W = self._search_layer(query_c, [curr_obj], ef, 0, return_visited=False, use_native=active_use_native)
-            self.last_visited_count = 0
-            visited_count = 0
 
-        W.sort(key=lambda x: x[1])
+        visit_budget = max(2000, ef * 20) if filter_dict else -1
         
-        results = []
-        for n_id, dist in W:
-            if n_id in self.deleted_nodes:
-                continue
-            if self._matches_filter(n_id, filter_dict):
-                meta = self.metadata_store.get(n_id, {})
-                results.append((n_id, dist, meta))
-                if len(results) == k:
-                    break
+        W, visited_count = self._search_layer(
+            query_c, [curr_obj], ef, 0,
+            return_visited=True,
+            use_native=active_use_native,
+            allowed_mask=allowed_mask,
+            allowed_set=allowed_set,
+            visit_budget=visit_budget
+        )
+        self.last_visited_count = visited_count if return_visited else 0
+
+        target_ef = min(ef, len(allowed_set)) if allowed_set is not None else ef
+        target_k = min(k, len(allowed_set)) if allowed_set is not None else k
+        should_escalate = filter_dict and (len(W) < target_ef or (visit_budget > 0 and visited_count >= visit_budget))
+
+        if should_escalate:
+            results = self._search_brute_force_matching(
+                query_c,
+                allowed_set,
+                k=k,
+                return_visited=False,
+                matching_indices=matching_indices,
+                active_matching_ids=active_matching_ids
+            )
+        else:
+            W.sort(key=lambda x: x[1])
+            results = []
+            for n_id, dist in W:
+                if n_id in self.deleted_nodes:
+                    continue
+                if allowed_set is None or n_id in allowed_set:
+                    meta = self.metadata_store.get(n_id, {})
+                    results.append((n_id, dist, meta))
+                    if len(results) == k:
+                        break
+
+            if filter_dict and len(results) < target_k:
+                results = self._search_brute_force_matching(
+                    query_c,
+                    allowed_set,
+                    k=k,
+                    return_visited=False,
+                    matching_indices=matching_indices,
+                    active_matching_ids=active_matching_ids
+                )
                         
         if return_visited:
             return results, visited_count
@@ -825,6 +1106,7 @@ class HNSWIndex:
         k: int = 10,
         ef: int = None,
         filter_dict: dict = None,
+        filters: List[dict] = None,
         num_threads: int = None,
         return_visited: bool = False,
         use_native: bool = None
@@ -840,21 +1122,38 @@ class HNSWIndex:
             queries_arr = np.ascontiguousarray(queries, dtype=np.float32)
             n_queries = len(queries_arr)
             
+            def _get_filter(i: int):
+                if filters is not None and i < len(filters):
+                    return filters[i]
+                return filter_dict
+            
             if n_queries == 1 or num_threads == 1:
-                return [self._search_unlocked(queries_arr[i], k=k, ef=ef, filter_dict=filter_dict, return_visited=return_visited, use_native=use_native) for i in range(n_queries)]
+                return [self._search_unlocked(queries_arr[i], k=k, ef=ef, filter_dict=_get_filter(i), return_visited=return_visited, use_native=use_native) for i in range(n_queries)]
                 
             workers = num_threads if num_threads is not None else min(32, os.cpu_count() or 4)
+            indices = list(range(n_queries))
             chunk_size = max(1, n_queries // (workers * 4))
-            chunks = [queries_arr[i:i+chunk_size] for i in range(0, n_queries, chunk_size)]
+            chunks = [indices[i:i+chunk_size] for i in range(0, n_queries, chunk_size)]
             
-            def _search_chunk(chunk):
-                return [self._search_unlocked(q, k=k, ef=ef, filter_dict=filter_dict, return_visited=return_visited, use_native=use_native) for q in chunk]
+            def _search_chunk(chunk_idxs):
+                return [self._search_unlocked(queries_arr[idx], k=k, ef=ef, filter_dict=_get_filter(idx), return_visited=return_visited, use_native=use_native) for idx in chunk_idxs]
                 
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 nested = list(executor.map(_search_chunk, chunks))
                 return [item for sublist in nested for item in sublist]
 
-    def _search_layer(self, query: np.ndarray, entry_points: List[int], ef: int, layer: int, return_visited: bool = False, use_native: bool = None):
+    def _search_layer(
+        self,
+        query: np.ndarray,
+        entry_points: List[int],
+        ef: int,
+        layer: int,
+        return_visited: bool = False,
+        use_native: bool = None,
+        allowed_mask: np.ndarray = None,
+        allowed_set: Set[int] = None,
+        visit_budget: int = -1
+    ):
         active_use_native = self.use_native if use_native is None else (use_native and HAS_NATIVE)
         if active_use_native and len(self.layer_edges) > layer:
             vec_matrix = self.nodes.get_matrix()
@@ -874,7 +1173,9 @@ class HNSWIndex:
                             self.layer_edges[layer],
                             self.layer_degrees[layer],
                             self.metric_code,
-                            return_visited=True
+                            return_visited=True,
+                            allowed=allowed_mask,
+                            visit_budget=visit_budget
                         )
                         idx_to_id = self.nodes.index_to_node_id
                         return [(idx_to_id[idx], dist) for idx, dist in raw_res if idx in idx_to_id], visited_count
@@ -887,14 +1188,33 @@ class HNSWIndex:
                             self.layer_edges[layer],
                             self.layer_degrees[layer],
                             self.metric_code,
-                            return_visited=False
+                            return_visited=False,
+                            allowed=allowed_mask,
+                            visit_budget=visit_budget
                         )
                         idx_to_id = self.nodes.index_to_node_id
                         return [(idx_to_id[idx], dist) for idx, dist in raw_res if idx in idx_to_id]
 
-        return self._search_layer_python(query, entry_points, ef, layer, return_visited=return_visited)
+        return self._search_layer_python(
+            query,
+            entry_points,
+            ef,
+            layer,
+            return_visited=return_visited,
+            allowed_set=allowed_set,
+            visit_budget=visit_budget
+        )
 
-    def _search_layer_python(self, query: np.ndarray, entry_points: List[int], ef: int, layer: int, return_visited: bool = False):
+    def _search_layer_python(
+        self,
+        query: np.ndarray,
+        entry_points: List[int],
+        ef: int,
+        layer: int,
+        return_visited: bool = False,
+        allowed_set: Set[int] = None,
+        visit_budget: int = -1
+    ):
         visited = set(entry_points)
         C = []
         W = []
@@ -902,15 +1222,13 @@ class HNSWIndex:
         for ep in entry_points:
             d = self.distance_fn(query, self.nodes[ep])
             heapq.heappush(C, (d, ep))
-            heapq.heappush(W, (-d, ep))
+            if allowed_set is None or ep in allowed_set:
+                heapq.heappush(W, (-d, ep))
             
         while len(C) > 0:
             c_dist, c_id = heapq.heappop(C)
             
-            f_dist_neg, f_id = W[0]
-            f_dist = -f_dist_neg
-            
-            if c_dist > f_dist:
+            if len(W) >= ef and c_dist > -W[0][0]:
                 break
                 
             neighbors = self.graphs[layer].get(c_id, set())
@@ -924,17 +1242,22 @@ class HNSWIndex:
             dists = self._batch_distance(query, unvisited)
             
             for i, neighbor in enumerate(unvisited):
-                f_dist_neg, _ = W[0]
-                f_dist = -f_dist_neg
-                
                 d = float(dists[i])
+                is_allowed = (allowed_set is None or neighbor in allowed_set)
                 
-                if len(W) < ef or d < f_dist:
+                if is_allowed:
+                    if len(W) < ef or d < -W[0][0]:
+                        heapq.heappush(W, (-d, neighbor))
+                        if len(W) > ef:
+                            heapq.heappop(W)
+                            
+                if len(W) < ef or d < -W[0][0]:
                     heapq.heappush(C, (d, neighbor))
-                    heapq.heappush(W, (-d, neighbor))
                     
-                    if len(W) > ef:
-                        heapq.heappop(W)
+                if visit_budget > 0 and len(visited) >= visit_budget:
+                    break
+            if visit_budget > 0 and len(visited) >= visit_budget:
+                break
                             
         res = [(n_id, -d_neg) for d_neg, n_id in W]
         if return_visited:
@@ -1007,8 +1330,10 @@ class HNSWIndex:
                 
             if node_id in self.metadata_store:
                 del self.metadata_store[node_id]
+            self.metadata_index.delete(node_id)
                 
             self.deleted_nodes.add(node_id)
+            self._update_filter_cache_on_delete(node_id)
 
     def compact(self):
         """
@@ -1070,6 +1395,8 @@ class HNSWIndex:
 
             self.deleted_nodes.clear()
             self._rebuild_layer_arrays()
+            self.metadata_index.rebuild(self.metadata_store, self.deleted_nodes)
+            self._filter_cache.clear()
 
             if self.wal:
                 self.wal.truncate()

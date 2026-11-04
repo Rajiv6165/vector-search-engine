@@ -26,6 +26,11 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
+# Install runtime OpenMP dependency (libgomp) to prevent silent fallback
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy the virtual environment from the builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"

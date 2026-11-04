@@ -179,11 +179,15 @@ def search_vectors_batch(req: BatchSearchRequest, api_key: str = Depends(verify_
     if current_dim > 0 and queries_array.shape[1] != current_dim:
         raise HTTPException(status_code=400, detail=f"Vector dimension mismatch. Expected {current_dim}, got {queries_array.shape[1]}")
         
+    if req.filters is not None and len(req.filters) != len(req.vectors):
+        raise HTTPException(status_code=400, detail="Length of filters list must match length of vectors list")
+
     batch_results = index.batch_search(
         queries_array,
         k=req.k,
         ef=req.ef,
         filter_dict=req.filter,
+        filters=req.filters,
         num_threads=req.num_threads
     )
     

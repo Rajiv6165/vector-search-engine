@@ -68,14 +68,16 @@ inline std::vector<std::pair<int, float>> search_layer(
     const int* degrees,
     int max_neighbors,
     int metric,
-    int* num_visited = nullptr
+    int* num_visited = nullptr,
+    const uint8_t* allowed = nullptr,
+    int visit_budget = -1
 ) {
     std::vector<uint8_t> visited(num_vectors, 0);
     int visited_cnt = 0;
 
-    // C is min-heap: candidate closest to query is popped first
+    // C is min-heap: candidate closest to query is popped first (for graph traversal)
     std::priority_queue<Candidate, std::vector<Candidate>, std::greater<Candidate>> C;
-    // W is max-heap: candidate farthest from query is at top
+    // W is max-heap: candidate farthest from query is at top (filtered results)
     std::priority_queue<Result, std::vector<Result>, std::less<Result>> W;
 
     for (int i = 0; i < num_entry_points; ++i) {
@@ -85,15 +87,16 @@ inline std::vector<std::pair<int, float>> search_layer(
         visited_cnt++;
         float d = compute_distance(query, vectors + (size_t)ep * dim, dim, metric);
         C.push({d, ep});
-        W.push({d, ep});
+        if (allowed == nullptr || allowed[ep] != 0) {
+            W.push({d, ep});
+        }
     }
 
     while (!C.empty()) {
         Candidate curr = C.top();
         C.pop();
 
-        float f_dist = W.top().dist;
-        if (curr.dist > f_dist) {
+        if (W.size() >= (size_t)ef && curr.dist > W.top().dist) {
             break;
         }
 
@@ -110,17 +113,28 @@ inline std::vector<std::pair<int, float>> search_layer(
             visited_cnt++;
 
             float d = compute_distance(query, vectors + (size_t)n * dim, dim, metric);
-            f_dist = W.top().dist;
 
-            if (W.size() < (size_t)ef || d < f_dist) {
-                C.push({d, n});
-                W.push({d, n});
-                if (W.size() > (size_t)ef) {
-                    W.pop();
+            bool is_allowed = (allowed == nullptr || allowed[n] != 0);
+            if (is_allowed) {
+                if (W.size() < (size_t)ef || d < W.top().dist) {
+                    W.push({d, n});
+                    if (W.size() > (size_t)ef) {
+                        W.pop();
+                    }
                 }
+            }
+
+            // In-graph traversal: explore through non-matching nodes to preserve connectivity
+            if (W.size() < (size_t)ef || d < W.top().dist) {
+                C.push({d, n});
+            }
+
+            if (visit_budget > 0 && visited_cnt >= visit_budget) {
+                goto done_traversal;
             }
         }
     }
+done_traversal:
 
     if (num_visited != nullptr) {
         *num_visited = visited_cnt;

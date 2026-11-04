@@ -63,10 +63,20 @@ def run_api_tests():
             resp = client.post("/vectors", json={"node_id": 3, "vector": [0.1, 0.2]})
             assert resp.status_code == 400
 
+            print("Running test_api_filter_validation...")
+            # Non-scalar value in filter must fail validation with 422
+            resp = client.post("/search", json={
+                "vector": [0.1, 0.2, 0.3, 0.5],
+                "k": 2,
+                "filter": {"category": ["electronics", "appliances"]}
+            })
+            assert resp.status_code == 422, f"Expected 422 for nested list filter value, got {resp.status_code}"
+
             print("Running test_api_batch_operations...")
             resp = client.post("/vectors/batch", json={
                 "vectors": [[0.5, 0.5, 0.5, 0.5], [0.6, 0.6, 0.6, 0.6]],
-                "node_ids": [10, 11]
+                "node_ids": [10, 11],
+                "metadatas": [{"category": "appliances"}, {"category": "clothing"}]
             })
             assert resp.status_code == 200
             assert resp.json()["inserted_count"] == 2
@@ -80,6 +90,37 @@ def run_api_tests():
             assert len(batch_res) == 2
             assert batch_res[0][0]["node_id"] == 10
             assert batch_res[1][0]["node_id"] == 2
+
+            print("Running test_api_batch_filtered_search...")
+            # Shared filter
+            resp = client.post("/search/batch", json={
+                "vectors": [[0.5, 0.5, 0.5, 0.5], [0.1, 0.2, 0.3, 0.9]],
+                "k": 1,
+                "filter": {"category": "clothing"}
+            })
+            assert resp.status_code == 200
+            batch_res = resp.json()["results"]
+            assert batch_res[0][0]["node_id"] == 11
+            assert batch_res[1][0]["node_id"] == 2
+
+            # Per-query filters
+            resp = client.post("/search/batch", json={
+                "vectors": [[0.5, 0.5, 0.5, 0.5], [0.1, 0.2, 0.3, 0.9]],
+                "k": 1,
+                "filters": [{"category": "appliances"}, {"category": "clothing"}]
+            })
+            assert resp.status_code == 200
+            batch_res = resp.json()["results"]
+            assert batch_res[0][0]["node_id"] == 10
+            assert batch_res[1][0]["node_id"] == 2
+
+            # Mismatched filters length returns 400
+            resp = client.post("/search/batch", json={
+                "vectors": [[0.5, 0.5, 0.5, 0.5], [0.1, 0.2, 0.3, 0.9]],
+                "k": 1,
+                "filters": [{"category": "appliances"}]
+            })
+            assert resp.status_code == 400
             
         # Test shutdown and reload
         print("Running test_lifecycle_reload...")

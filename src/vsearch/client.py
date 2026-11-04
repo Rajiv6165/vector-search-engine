@@ -67,7 +67,15 @@ class VSearchClient:
         resp.raise_for_status()
         return resp.json()
 
-    def batch_search(self, vectors: List[List[float]], k: int = 10, ef: int = 50, filter_dict: Optional[Dict[str, Any]] = None, num_threads: Optional[int] = None) -> Dict[str, Any]:
+    def batch_search(
+        self,
+        vectors: List[List[float]],
+        k: int = 10,
+        ef: int = 50,
+        filter_dict: Optional[Dict[str, Any]] = None,
+        filters: Optional[List[Optional[Dict[str, Any]]]] = None,
+        num_threads: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         Batch search across multiple query vectors.
         """
@@ -79,6 +87,8 @@ class VSearchClient:
         }
         if filter_dict is not None:
             payload["filter"] = filter_dict
+        if filters is not None:
+            payload["filters"] = filters
         if num_threads is not None:
             payload["num_threads"] = num_threads
             

@@ -6,6 +6,7 @@
 
 from libcpp.vector cimport vector
 from libcpp.pair cimport pair
+from libc.stdint cimport uint8_t
 import numpy as np
 cimport numpy as cnp
 
@@ -24,7 +25,9 @@ cdef extern from "hnsw_core.hpp" namespace "hnsw" nogil:
         const int* degrees,
         int max_neighbors,
         int metric,
-        int* num_visited
+        int* num_visited,
+        const uint8_t* allowed,
+        int visit_budget
     )
 
     pair[int, float] greedy_search_layer(
@@ -66,7 +69,9 @@ def search_layer_native(
     cnp.ndarray[cnp.int32_t, ndim=2, mode="c"] edges,
     cnp.ndarray[cnp.int32_t, ndim=1, mode="c"] degrees,
     int metric,
-    bint return_visited=False
+    bint return_visited=False,
+    cnp.ndarray[cnp.uint8_t, ndim=1, mode="c"] allowed=None,
+    int visit_budget=-1
 ):
     cdef int num_entry_points = entry_points.shape[0]
     cdef int num_vectors = vectors.shape[0]
@@ -77,6 +82,9 @@ def search_layer_native(
     cdef const float* vecs_ptr = <const float*>vectors.data
     cdef const int* edges_ptr = <const int*>edges.data
     cdef const int* degrees_ptr = <const int*>degrees.data
+    cdef const uint8_t* allowed_ptr = NULL
+    if allowed is not None:
+        allowed_ptr = <const uint8_t*>allowed.data
     cdef vector[pair[int, float]] c_results
     cdef int visited_count = 0
 
@@ -93,7 +101,9 @@ def search_layer_native(
             degrees_ptr,
             max_neighbors,
             metric,
-            &visited_count
+            &visited_count,
+            allowed_ptr,
+            visit_budget
         )
 
     cdef list py_results = []
@@ -227,7 +237,9 @@ def batch_search_layer_native(
                 degrees_ptr,
                 max_neighbors,
                 metric,
-                NULL
+                NULL,
+                NULL,
+                -1
             )
 
     cdef list py_batch_results = []
