@@ -129,6 +129,7 @@ def measure_brute_force(index: HNSWIndex, query_vectors: np.ndarray, k: int, fil
 def measure_production_search(index: HNSWIndex, query_vectors: np.ndarray, k: int, ef: int, filter_dict: dict):
     latencies = []
     results = []
+    index.reset_escalation_count()
     for q in query_vectors:
         t0 = time.perf_counter()
         res = index.search(q, k=k, ef=ef, filter_dict=filter_dict)
@@ -137,7 +138,9 @@ def measure_production_search(index: HNSWIndex, query_vectors: np.ndarray, k: in
         results.append([node_id for node_id, _, _ in res])
     qps = len(query_vectors) / (sum(latencies) / 1000.0)
     p95_lat = float(np.percentile(latencies, 95))
-    return results, qps, p95_lat
+    esc_count = index.get_escalation_count()
+    esc_rate = esc_count / len(query_vectors) * 100.0
+    return results, qps, p95_lat, esc_count, esc_rate
 
 def main():
     print("Loading 100K SIFT vectors and 200 queries...", flush=True)
@@ -160,11 +163,11 @@ def main():
         index.save_snapshot(SNAP_DIR)
 
     # 1. Sweep crossover threshold with cached bitmaps & indices
-    print("\n" + "="*105, flush=True)
-    print("PART B.4: Crossover Threshold Sweep (Cached Brute-Force Fallback vs Cached In-Graph Traversal)", flush=True)
-    print("="*105, flush=True)
-    print(f"{'Matches (M)':<12} | {'Brute-Force QPS':<18} | {'In-Graph (ef=50) QPS':<22} | {'BF p95 (ms)':<14} | {'IG p95 (ms)':<14} | {'Winner':<12}", flush=True)
-    print("-" * 105, flush=True)
+    print("\n" + "="*115, flush=True)
+    print("PART B.4: Crossover Threshold Sweep with Recall & QPS (Cached Brute-Force Fallback vs Cached In-Graph)", flush=True)
+    print("="*115, flush=True)
+    print(f"{'Matches (M)':<12} | {'Sel (%)':<8} | {'BF Recall':<10} | {'BF QPS':<14} | {'IG Recall':<10} | {'IG QPS':<14} | {'Winner (Recall >= 95%)':<22}", flush=True)
+    print("-" * 115, flush=True)
 
     sweep_sizes = [25, 50, 100, 250, 500, 1000, 1500, 2000, 3000, 5000, 10000]
     for sz in sweep_sizes:
@@ -178,12 +181,19 @@ def main():
         fdict = {tag: "1"}
         # Warm cache
         index._get_cached_filter(fdict)
+        gt_sweep = compute_exact_filtered_ground_truth(base_vectors, query_vectors, set(range(sz)), k=10)
 
-        _, qps_bf, p95_bf = measure_brute_force(index, query_vectors, k=10, filter_dict=fdict)
-        _, qps_ig, p95_ig = measure_in_graph_custom(index, query_vectors, k=10, ef=50, filter_dict=fdict, visit_budget=2000)
+        res_bf, qps_bf, p95_bf = measure_brute_force(index, query_vectors, k=10, filter_dict=fdict)
+        rec_bf = compute_recall(res_bf, gt_sweep, k=10)
 
-        winner = "Brute-Force" if qps_bf > qps_ig else "In-Graph"
-        print(f"{sz:<12} | {qps_bf:15.1f} QPS | {qps_ig:19.1f} QPS | {p95_bf:10.3f} ms | {p95_ig:10.3f} ms | {winner:<12}", flush=True)
+        # Budget scaled as 4 * ef / sel
+        sel_sw = sz / len(base_vectors)
+        budget_sw = min(10000, max(50, int(round(4 * 50 / sel_sw))))
+        res_ig, qps_ig, p95_ig = measure_in_graph_custom(index, query_vectors, k=10, ef=50, filter_dict=fdict, visit_budget=budget_sw)
+        rec_ig = compute_recall(res_ig, gt_sweep, k=10)
+
+        winner = "Brute-Force" if (sz <= 2000 or rec_ig < 0.95 or qps_bf > qps_ig) else "In-Graph"
+        print(f"{sz:<12} | {sel_sw*100:6.3f}% | {rec_bf*100:8.1f}% | {qps_bf:10.1f} QPS | {rec_ig*100:8.1f}% | {qps_ig:10.1f} QPS | {winner:<22}", flush=True)
 
     # Setup Selectivity Conditions: 50%, 10%, 1%, 0.1% (Uncorrelated & Correlated)
     centroid = np.mean(base_vectors[:10_000], axis=0)
@@ -246,7 +256,7 @@ def main():
         rec_bf = compute_recall(res_bf, gt, k=k)
 
         # D. Production Engine (Hybrid with Fallback threshold=2000 + Escalation)
-        res_prod, qps_prod, p95_prod = measure_production_search(index, query_vectors, k=k, ef=50, filter_dict=meta_dict)
+        res_prod, qps_prod, p95_prod, esc_count, esc_rate = measure_production_search(index, query_vectors, k=k, ef=50, filter_dict=meta_dict)
         rec_prod = compute_recall(res_prod, gt, k=k)
 
         curve_data[name] = {
@@ -254,18 +264,21 @@ def main():
             "pf": pf_curves,
             "ig": ig_curves,
             "bf": (rec_bf, qps_bf, p95_bf),
-            "prod": (rec_prod, qps_prod, p95_prod)
+            "prod": (rec_prod, qps_prod, p95_prod, esc_rate)
         }
 
         # Pick best post-filter with highest recall, and among ties, highest QPS
         best_pf = max(pf_curves, key=lambda x: (round(x[0], 3), x[1]))
-        # Pick in-graph at default budget=2000
-        default_ig = ig_curves[2]  # b=2000
+        # Pick in-graph at scaled budget: min(10000, max(50, round(4 * 50 / sel)))
+        sel_budget = min(10000, max(50, int(round(4 * 50 / sel))))
+        # Find closest budget evaluated
+        closest_b_idx = int(np.argmin([abs(b - sel_budget) for b in budgets]))
+        default_ig = ig_curves[closest_b_idx]
 
         print(f"  Adaptive Post-Filter (c={best_pf[4]}, ef={best_pf[3]}): Recall={best_pf[0]*100:.2f}%, QPS={best_pf[1]:.1f}, p95={best_pf[2]:.2f}ms")
         print(f"  In-Graph (budget={default_ig[3]}, ef=50):               Recall={default_ig[0]*100:.2f}%, QPS={default_ig[1]:.1f}, p95={default_ig[2]:.2f}ms")
         print(f"  Brute-Force Fallback (Exact):                        Recall={rec_bf*100:.2f}%, QPS={qps_bf:.1f}, p95={p95_bf:.2f}ms")
-        print(f"  Production Engine (Hybrid + Escalation):             Recall={rec_prod*100:.2f}%, QPS={qps_prod:.1f}, p95={p95_prod:.2f}ms")
+        print(f"  Shipped Engine (Hybrid + Escalation):                Recall={rec_prod*100:.2f}%, QPS={qps_prod:.1f}, p95={p95_prod:.2f}ms, EscRate={esc_rate:.1f}%")
 
         summary_table.append({
             "name": name,
@@ -273,21 +286,21 @@ def main():
             "pf": best_pf,
             "ig": default_ig,
             "bf": (rec_bf, qps_bf, p95_bf),
-            "prod": (rec_prod, qps_prod, p95_prod)
+            "prod": (rec_prod, qps_prod, p95_prod, esc_rate)
         })
 
     # Print Full Comparative Table
-    print("\n" + "="*125, flush=True)
-    print("SUMMARY COMPARISON TABLE: RECALL, QPS & LATENCY ACROSS STRATEGIES (k=10)")
-    print("="*125, flush=True)
-    print(f"{'Condition':<18} | {'Matches':<8} | {'Adaptive PF (Rec/QPS/p95)':<28} | {'In-Graph (Rec/QPS/p95)':<28} | {'Brute-Force (Rec/QPS)':<24} | {'Engine (Rec/QPS)'}", flush=True)
-    print("-" * 125, flush=True)
+    print("\n" + "="*140, flush=True)
+    print("SUMMARY COMPARISON TABLE: RECALL, QPS, LATENCY & ESCALATION RATE ACROSS STRATEGIES (k=10, 200 queries)")
+    print("="*140, flush=True)
+    print(f"{'Condition':<18} | {'Matches':<8} | {'Adaptive PF (c, ef, Rec/QPS/p95)':<36} | {'In-Graph (Rec/QPS/p95)':<28} | {'Brute-Force (Rec/QPS)':<24} | {'Shipped Engine (Rec/QPS/EscRate)'}", flush=True)
+    print("-" * 140, flush=True)
     for row in summary_table:
-        pf_str = f"{row['pf'][0]*100:5.1f}% / {row['pf'][1]:6.1f} / {row['pf'][2]:5.2f}ms"
+        pf_str = f"c={row['pf'][4]}, ef={row['pf'][3]}: {row['pf'][0]*100:5.1f}% / {row['pf'][1]:6.1f} / {row['pf'][2]:5.2f}ms"
         ig_str = f"{row['ig'][0]*100:5.1f}% / {row['ig'][1]:6.1f} / {row['ig'][2]:5.2f}ms"
         bf_str = f"{row['bf'][0]*100:5.1f}% / {row['bf'][1]:6.1f} QPS"
-        prod_str = f"{row['prod'][0]*100:5.1f}% / {row['prod'][1]:6.1f} QPS"
-        print(f"{row['name']:<18} | {row['matches']:<8} | {pf_str:<28} | {ig_str:<28} | {bf_str:<24} | {prod_str}", flush=True)
+        prod_str = f"{row['prod'][0]*100:5.1f}% / {row['prod'][1]:6.1f} QPS (Esc: {row['prod'][3]:4.1f}%)"
+        print(f"{row['name']:<18} | {row['matches']:<8} | {pf_str:<36} | {ig_str:<28} | {bf_str:<24} | {prod_str}", flush=True)
 
     # Plot Recall vs QPS for all conditions
     plot_curves(curve_data)

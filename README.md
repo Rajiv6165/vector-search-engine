@@ -73,20 +73,21 @@ Read the deep-dive analysis: [Phase 9 Performance Report](PHASE9_PERFORMANCE.md)
 
 Production vector queries typically require categorical metadata filters (e.g. `tenant_id == 'alpha'`, `category == 'electronics'`). Standard post-filtering (searching without filters, then discarding non-matching vectors) completely collapses below 10% selectivity (<1% recall at 1% selectivity).
 
-`vsearch` implements a hybrid filtered search subsystem:
-- **Incremental Bitmask & Index Caching**: Inverted index maintains bitmasks and index arrays incrementally under the write lock, eliminating per-query conversion costs (0 us overhead).
+`vsearch` implements a defensible hybrid filtered search subsystem:
+- **Bounded LRU Cache with Per-(field, value) Bitmaps**: Maintains bitmasks and contiguous vector copies strictly per `(field, value)` pair under an LRU memory budget (`max_entries=1000`, `max_bytes=256MB`), eliminating combinatorial cache bloat and keeping insert check latency at **0.48 us** ($O(1)$). Multi-field filters are resolved by bitwise ANDing at query time.
 - **In-Graph Graph Traversal**: Explores through non-matching bridge nodes to preserve small-world graph reachability, while only admitting matching candidates into the result set.
-- **Selectivity-Aware Fallback ($M \le 2,000$)**: Automatically falls back to vectorized exact SIMD brute force when the matching candidate pool is small, delivering up to **29,980 QPS** with **100.00% exact recall**.
-- **Cluster Escalation**: Detects when graph traversal runs out of visit budget in trapped manifold clusters and escalates to exact brute force, lifting Correlated 10% recall from **82.80% to 99.85%**.
+- **Adaptive Scaled Visit Budget**: Scales search budgets to expected demand ($\min(10000, \max(ef, \text{round}(4 \cdot ef / S)))$).
+- **Refined Defensive Escalation**: Detects when graph traversal is trapped in disconnected clusters and escalates to exact brute force **only if fewer than $k$ matches were found after an expanded-budget retry**. On Correlated 10%, this achieves **876.1 QPS** (a 7.2x speedup over crude escalation) with a 0.5% escalation rate.
+- **Selectivity-Aware Fallback ($M \le 2,000$)**: For small subsets where post-filtering is the wrong tool, the engine automatically routes to exact SIMD brute force over cached contiguous vectors, achieving **up to 11,680 QPS** with **100.00% exact recall** (**88x to 645x faster** than post-filtering).
 
-| Selectivity | Matching Nodes | Adaptive Post-Filter (Matched Recall / QPS) | In-Graph Traversal (Recall / QPS) | Engine Hybrid Strategy |
-| :--- | :--- | :--- | :--- | :--- |
-| **50%** | 50,000 | 100.0% / 591 QPS | **99.5% / 2,977 QPS** | **In-Graph (5.0x faster than Post-Filter)** |
-| **10%** | 10,000 | 100.0% / 628 QPS | **98.5% / 2,087 QPS** | **In-Graph (3.3x faster than Post-Filter)** |
-| **1%**  | 1,000  | 100.0% / 60 QPS  | 79.2% / 2,108 QPS | **Exact Fallback (3,248 QPS, 54x faster)** |
-| **0.1%**| 100    | 83.2% / 27 QPS   | 17.7% / 2,354 QPS | **Exact Fallback (16,315 QPS, 611x faster)**|
+| Selectivity | Matching Nodes | Adaptive Post-Filter ($c$, $ef$, Rec / QPS / p95) | In-Graph Only (Recall / QPS) | Shipped Engine (Recall / QPS / Escalation) | Speedup / Defensible Takeaway |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **50%** | 50,000 | $c=16, ef=320$: 100.0% / 390 QPS / 3.07ms | 92.0% / **3,236 QPS** | **87.3% / 2,950 QPS (Esc: 0.0%)** | **In-Graph is 7.6x faster than Post-Filter** |
+| **10%** | 10,000 | $c=4, ef=400$: 100.0% / 324 QPS / 4.06ms | 98.5% / **1,290 QPS** | **98.5% / 1,159 QPS (Esc: 0.0%)** | **In-Graph is 3.6x faster than Post-Filter** |
+| **1%**  | 1,000  | $c=4, ef=4000$: 100.0% / 35 QPS / 39.37ms | 99.8% / 298 QPS | **100.0% / 3,104 QPS (Esc: 0.0%)** | **Post-filter is wrong tool; Fallback is 88x faster** |
+| **0.1%**| 100    | $c=1, ef=10000$: 83.2% / 18 QPS / 184.67ms | 71.1% / 278 QPS | **100.0% / 11,681 QPS (Esc: 0.0%)**| **Post-filter collapses; Fallback is 645x faster** |
 
-Read the complete engineering analysis and proofs: [Phase 10 Filtered Search Report](PHASE10_FILTERED_SEARCH.md) and the comprehensive [Architecture Explainer](ARCHITECTURE_EXPLAINER.md).
+Read the complete engineering analysis, profiling breakdowns, and mathematical proofs: [Phase 10 Filtered Search Report](PHASE10_FILTERED_SEARCH.md) and the comprehensive [Architecture Explainer](ARCHITECTURE_EXPLAINER.md).
 
 ## Quickstart (Local & Docker)
 

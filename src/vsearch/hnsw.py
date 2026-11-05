@@ -4,7 +4,7 @@ import heapq
 import os
 import json
 import struct
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Set, Callable, Optional, Union, Any
 import numpy as np
@@ -424,6 +424,135 @@ class MetadataIndex:
         self._node_metadata.clear()
 
 
+class FilterCacheEntry:
+    def __init__(
+        self,
+        field: str,
+        value: Any,
+        allowed_mask: Optional[np.ndarray],
+        allowed_set: Set[int],
+        matching_indices: Optional[np.ndarray],
+        active_matching_ids: Optional[List[int]],
+        cached_vectors: Optional[np.ndarray] = None,
+        nodes: Any = None
+    ):
+        self.field = field
+        self.value = value
+        self._allowed_mask = allowed_mask
+        self.allowed_set = allowed_set
+        self.matching_indices = matching_indices
+        self.active_matching_ids = active_matching_ids
+        self.cached_vectors = cached_vectors
+        self._nodes = nodes
+        self.size_bytes = self.compute_size()
+
+    @property
+    def allowed_mask(self) -> Optional[np.ndarray]:
+        if self._allowed_mask is not None and self._nodes is not None:
+            cur_len = len(self._nodes)
+            if len(self._allowed_mask) < cur_len:
+                cap = max(cur_len, getattr(self._nodes, "capacity", cur_len))
+                new_mask = np.zeros(cap, dtype=np.uint8)
+                new_mask[:len(self._allowed_mask)] = self._allowed_mask
+                self._allowed_mask = new_mask
+        return self._allowed_mask
+
+    @allowed_mask.setter
+    def allowed_mask(self, val: Optional[np.ndarray]):
+        self._allowed_mask = val
+
+    def compute_size(self) -> int:
+        b = 0
+        if self._allowed_mask is not None:
+            b += self._allowed_mask.nbytes
+        if self.matching_indices is not None:
+            b += self.matching_indices.nbytes
+        if self.cached_vectors is not None:
+            b += self.cached_vectors.nbytes
+        b += len(self.allowed_set) * 8
+        if self.active_matching_ids is not None:
+            b += len(self.active_matching_ids) * 8
+        return b
+
+    def __getitem__(self, item: str):
+        if item == "matching_ids":
+            return self.allowed_set
+        if item == "allowed_mask":
+            return self.allowed_mask
+        return getattr(self, item)
+
+    def __setitem__(self, item: str, val: Any):
+        if item == "allowed_mask":
+            self.allowed_mask = val
+        else:
+            setattr(self, item, val)
+
+    def get(self, item: str, default: Any = None):
+        if item == "matching_ids":
+            return self.allowed_set
+        if item == "allowed_mask":
+            return self.allowed_mask
+        return getattr(self, item, default)
+
+
+class FilterCache:
+    def __init__(self, max_entries: int = 1000, max_bytes: int = 256 * 1024 * 1024):
+        self.max_entries = max_entries
+        self.max_bytes = max_bytes
+        self.entries: OrderedDict[Tuple[str, Any], FilterCacheEntry] = OrderedDict()
+        self.total_bytes: int = 0
+
+    def _normalize_key(self, key):
+        if isinstance(key, tuple) and len(key) == 1 and isinstance(key[0], tuple):
+            return key[0]
+        return key
+
+    def __contains__(self, key):
+        return self._normalize_key(key) in self.entries
+
+    def __getitem__(self, key):
+        norm = self._normalize_key(key)
+        self.entries.move_to_end(norm)
+        return self.entries[norm]
+
+    def __setitem__(self, key, entry: FilterCacheEntry):
+        self.put(key, entry)
+
+    def get(self, key, default=None):
+        norm = self._normalize_key(key)
+        if norm in self.entries:
+            self.entries.move_to_end(norm)
+            return self.entries[norm]
+        return default
+
+    def put(self, key, entry: FilterCacheEntry):
+        norm = self._normalize_key(key)
+        if norm in self.entries:
+            old = self.entries.pop(norm)
+            self.total_bytes -= old.size_bytes
+        self.entries[norm] = entry
+        self.total_bytes += entry.size_bytes
+        self._evict_if_needed()
+
+    def _evict_if_needed(self):
+        while len(self.entries) > self.max_entries or (self.total_bytes > self.max_bytes and len(self.entries) > 1):
+            _, old_entry = self.entries.popitem(last=False)
+            self.total_bytes -= old_entry.size_bytes
+
+    def values(self):
+        return self.entries.values()
+
+    def items(self):
+        return self.entries.items()
+
+    def __len__(self):
+        return len(self.entries)
+
+    def clear(self):
+        self.entries.clear()
+        self.total_bytes = 0
+
+
 class HNSWIndex:
     def __init__(self, config: HNSWConfig = None, metric: str = "l2", persist_dir: str = None):
         self.config = config if config is not None else HNSWConfig()
@@ -463,7 +592,8 @@ class HNSWIndex:
         self.deleted_nodes: Set[int] = set()
         self.last_visited_count: int = 0
         self.filter_fallback_threshold: int = 2000
-        self._filter_cache: Dict[Tuple, dict] = {}
+        self._filter_cache = FilterCache(max_entries=1000, max_bytes=256 * 1024 * 1024)
+        self.escalation_count: int = 0
 
     def seed_level_generator(self, seed: int):
         """Seed the level generator RNG for deterministic index construction."""
@@ -720,7 +850,7 @@ class HNSWIndex:
         if metadata:
             self.metadata_store[node_id] = metadata
             self.metadata_index.insert(node_id, metadata)
-        self._update_filter_cache_on_insert(node_id, metadata)
+        self._update_filter_cache_on_insert(node_id, vec_array, metadata)
         
         if self.entry_point is None:
             self.entry_point = node_id
@@ -842,7 +972,8 @@ class HNSWIndex:
         k: int,
         return_visited: bool = False,
         matching_indices: np.ndarray = None,
-        active_matching_ids: List[int] = None
+        active_matching_ids: List[int] = None,
+        cached_vectors: np.ndarray = None
     ):
         if matching_indices is None or active_matching_ids is None:
             active_matching = [nid for nid in matching_ids if nid not in self.deleted_nodes and nid in self.nodes]
@@ -857,7 +988,11 @@ class HNSWIndex:
         
         query_c = np.ascontiguousarray(query, dtype=np.float32)
         if self.use_native:
-            vec_matrix = self.nodes.get_matrix()[matching_indices]
+            if cached_vectors is not None and len(cached_vectors) == len(active_matching_ids):
+                vec_matrix = cached_vectors
+            else:
+                vec_matrix = self.nodes.get_matrix()[matching_indices]
+
             if self.metric_code == 0:  # L2
                 diff = vec_matrix - query_c
                 dists = np.sqrt(np.sum(diff * diff, axis=1))
@@ -870,7 +1005,11 @@ class HNSWIndex:
             dists = np.array([self.distance_fn(query_c, self.nodes[nid]) for nid in active_matching_ids], dtype=np.float32)
             
         n_take = min(k, len(active_matching_ids))
-        top_k_subidx = np.argsort(dists)[:n_take]
+        if len(dists) > n_take:
+            subidx = np.argpartition(dists, n_take)[:n_take]
+            top_k_subidx = subidx[np.argsort(dists[subidx])]
+        else:
+            top_k_subidx = np.argsort(dists)
             
         results = [
             (active_matching_ids[idx], float(dists[idx]), self.metadata_store.get(active_matching_ids[idx], {}))
@@ -884,95 +1023,162 @@ class HNSWIndex:
     def _get_cached_filter(self, filter_dict: dict) -> Optional[dict]:
         if not filter_dict:
             return None
-        cache_key = tuple(sorted(filter_dict.items()))
         num_vectors = self.nodes.get_matrix().shape[0]
-        entry = self._filter_cache.get(cache_key)
-        
-        if entry is None or entry["allowed_mask"] is None or len(entry["allowed_mask"]) < num_vectors:
-            raw_matching_ids = self.metadata_index.get_matching_ids(filter_dict)
-            if raw_matching_ids is None:
-                return None
-            
-            allowed_set = {nid for nid in raw_matching_ids if nid not in self.deleted_nodes}
-            allowed_mask = np.zeros(num_vectors, dtype=np.uint8)
-            id_to_idx = self.nodes.node_id_to_index
-            active_matching_ids = []
-            matching_indices_list = []
-            
-            for nid in allowed_set:
-                idx = id_to_idx.get(nid)
-                if idx is not None and idx < num_vectors:
-                    allowed_mask[idx] = 1
-                    matching_indices_list.append(idx)
-                    active_matching_ids.append(nid)
-            
-            matching_indices = np.array(matching_indices_list, dtype=np.int32)
-            entry = {
-                "matching_ids": raw_matching_ids,
-                "allowed_set": allowed_set,
-                "allowed_mask": allowed_mask,
-                "matching_indices": matching_indices,
-                "active_matching_ids": active_matching_ids
-            }
-            self._filter_cache[cache_key] = entry
-        else:
-            if entry["matching_indices"] is None or entry["active_matching_ids"] is None:
+
+        if len(filter_dict) == 1:
+            (f, v) = next(iter(filter_dict.items()))
+            key = (f, v)
+            entry = self._filter_cache.get(key)
+            if entry is None or entry.allowed_mask is None or len(entry.allowed_mask) < num_vectors:
+                raw_matching_ids = self.metadata_index.get_matching_ids(filter_dict)
+                if raw_matching_ids is None:
+                    return None
+                
+                allowed_set = {nid for nid in raw_matching_ids if nid not in self.deleted_nodes}
+                cap = max(num_vectors, getattr(self.nodes, "capacity", num_vectors))
+                allowed_mask = np.zeros(cap, dtype=np.uint8)
                 id_to_idx = self.nodes.node_id_to_index
                 active_matching_ids = []
                 matching_indices_list = []
-                for nid in entry["allowed_set"]:
+                for nid in allowed_set:
                     idx = id_to_idx.get(nid)
                     if idx is not None and idx < num_vectors:
+                        allowed_mask[idx] = 1
                         matching_indices_list.append(idx)
                         active_matching_ids.append(nid)
-                entry["matching_indices"] = np.array(matching_indices_list, dtype=np.int32)
-                entry["active_matching_ids"] = active_matching_ids
-                
-        return entry
+                matching_indices = np.array(matching_indices_list, dtype=np.int32)
+                cached_vectors = None
+                if len(matching_indices) > 0 and len(matching_indices) <= 20000:
+                    cached_vectors = np.ascontiguousarray(self.nodes.get_matrix()[matching_indices])
 
-    def _update_filter_cache_on_insert(self, node_id: int, metadata: Optional[dict]):
+                entry = FilterCacheEntry(
+                    field=f,
+                    value=v,
+                    allowed_mask=allowed_mask,
+                    allowed_set=allowed_set,
+                    matching_indices=matching_indices,
+                    active_matching_ids=active_matching_ids,
+                    cached_vectors=cached_vectors,
+                    nodes=self.nodes
+                )
+                self._filter_cache.put(key, entry)
+            else:
+                entry._nodes = self.nodes
+                if entry.matching_indices is None or entry.active_matching_ids is None:
+                    id_to_idx = self.nodes.node_id_to_index
+                    active_matching_ids = []
+                    matching_indices_list = []
+                    for nid in entry.allowed_set:
+                        idx = id_to_idx.get(nid)
+                        if idx is not None and idx < num_vectors:
+                            matching_indices_list.append(idx)
+                            active_matching_ids.append(nid)
+                    entry.matching_indices = np.array(matching_indices_list, dtype=np.int32)
+                    entry.active_matching_ids = active_matching_ids
+                    if len(entry.matching_indices) > 0 and len(entry.matching_indices) <= 20000:
+                        entry.cached_vectors = np.ascontiguousarray(self.nodes.get_matrix()[entry.matching_indices])
+                    entry.size_bytes = entry.compute_size()
+
+            return {
+                "matching_ids": entry.allowed_set,
+                "allowed_set": entry.allowed_set,
+                "allowed_mask": entry.allowed_mask,
+                "matching_indices": entry.matching_indices,
+                "active_matching_ids": entry.active_matching_ids,
+                "cached_vectors": entry.cached_vectors
+            }
+        else:
+            entries = []
+            for f, v in filter_dict.items():
+                sub_res = self._get_cached_filter({f: v})
+                if sub_res is None or len(sub_res["allowed_set"]) == 0:
+                    return {
+                        "matching_ids": set(),
+                        "allowed_set": set(),
+                        "allowed_mask": np.zeros(num_vectors, dtype=np.uint8),
+                        "matching_indices": np.array([], dtype=np.int32),
+                        "active_matching_ids": [],
+                        "cached_vectors": None
+                    }
+                entries.append(sub_res)
+
+            comb_mask = np.copy(entries[0]["allowed_mask"])
+            comb_set = set(entries[0]["allowed_set"])
+            for e in entries[1:]:
+                comb_mask = np.bitwise_and(comb_mask, e["allowed_mask"])
+                comb_set.intersection_update(e["allowed_set"])
+
+            matching_indices = np.where(comb_mask == 1)[0].astype(np.int32)
+            idx_to_id = self.nodes.index_to_node_id
+            active_matching_ids = [idx_to_id[i] for i in matching_indices if i in idx_to_id]
+            cached_vectors = None
+            if len(matching_indices) > 0 and len(matching_indices) <= 20000:
+                cached_vectors = np.ascontiguousarray(self.nodes.get_matrix()[matching_indices])
+
+            return {
+                "matching_ids": comb_set,
+                "allowed_set": comb_set,
+                "allowed_mask": comb_mask,
+                "matching_indices": matching_indices,
+                "active_matching_ids": active_matching_ids,
+                "cached_vectors": cached_vectors
+            }
+
+    def _update_filter_cache_on_insert(self, node_id: int, vector: np.ndarray, metadata: Optional[dict]):
         if not self._filter_cache:
             return
         idx = self.nodes.node_id_to_index.get(node_id)
+        if idx is None:
+            return
         num_vectors = self.nodes.get_matrix().shape[0]
-        
-        for cache_key, entry in list(self._filter_cache.items()):
-            filter_dict = dict(cache_key)
-            matches = False
-            if metadata:
-                matches = all(metadata.get(k) == v for k, v in filter_dict.items())
-            
-            if entry["allowed_mask"] is not None and len(entry["allowed_mask"]) < num_vectors:
-                new_mask = np.zeros(num_vectors, dtype=np.uint8)
-                new_mask[:len(entry["allowed_mask"])] = entry["allowed_mask"]
-                entry["allowed_mask"] = new_mask
-                
-            if matches:
-                entry["matching_ids"].add(node_id)
-                if node_id not in self.deleted_nodes:
-                    entry["allowed_set"].add(node_id)
-                    if idx is not None and entry["allowed_mask"] is not None and idx < len(entry["allowed_mask"]):
-                        entry["allowed_mask"][idx] = 1
-                    entry["matching_indices"] = None
-                    entry["active_matching_ids"] = None
-            else:
-                entry["matching_ids"].discard(node_id)
-                entry["allowed_set"].discard(node_id)
-                if idx is not None and entry["allowed_mask"] is not None and idx < len(entry["allowed_mask"]):
-                    entry["allowed_mask"][idx] = 0
-                entry["matching_indices"] = None
-                entry["active_matching_ids"] = None
+
+        if metadata:
+            for f, v in metadata.items():
+                key = (f, v)
+                entry = self._filter_cache.get(key)
+                if entry is not None:
+                    if len(entry.allowed_mask) < num_vectors:
+                        new_mask = np.zeros(num_vectors, dtype=np.uint8)
+                        new_mask[:len(entry.allowed_mask)] = entry.allowed_mask
+                        entry.allowed_mask = new_mask
+                    
+                    entry.allowed_mask[idx] = 1
+                    entry.allowed_set.add(node_id)
+                    if entry.matching_indices is not None:
+                        entry.matching_indices = np.append(entry.matching_indices, idx)
+                        entry.active_matching_ids.append(node_id)
+                    if entry.cached_vectors is not None:
+                        entry.cached_vectors = np.vstack([entry.cached_vectors, vector.reshape(1, -1)])
+                    entry.size_bytes = entry.compute_size()
+                    self._filter_cache._evict_if_needed()
 
     def _update_filter_cache_on_delete(self, node_id: int):
         if not self._filter_cache:
             return
         idx = self.nodes.node_id_to_index.get(node_id)
-        for entry in self._filter_cache.values():
-            entry["allowed_set"].discard(node_id)
-            if idx is not None and entry["allowed_mask"] is not None and idx < len(entry["allowed_mask"]):
-                entry["allowed_mask"][idx] = 0
-            entry["matching_indices"] = None
-            entry["active_matching_ids"] = None
+        meta = self.metadata_store.get(node_id, {})
+        if meta:
+            for f, v in meta.items():
+                key = (f, v)
+                entry = self._filter_cache.get(key)
+                if entry is not None:
+                    if idx is not None and idx < len(entry.allowed_mask):
+                        entry.allowed_mask[idx] = 0
+                    entry.allowed_set.discard(node_id)
+                    entry.cached_vectors = None
+                    entry.matching_indices = None
+                    entry.active_matching_ids = None
+                    entry.size_bytes = entry.compute_size()
+        else:
+            for entry in list(self._filter_cache.values()):
+                if node_id in entry.allowed_set:
+                    if idx is not None and idx < len(entry.allowed_mask):
+                        entry.allowed_mask[idx] = 0
+                    entry.allowed_set.discard(node_id)
+                    entry.cached_vectors = None
+                    entry.matching_indices = None
+                    entry.active_matching_ids = None
+                    entry.size_bytes = entry.compute_size()
 
     def _search_unlocked(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None, return_visited: bool = False, use_native: bool = None):
         if self.entry_point is None:
@@ -990,6 +1196,7 @@ class HNSWIndex:
         allowed_mask = None
         matching_indices = None
         active_matching_ids = None
+        cached_vectors = None
         
         if filter_dict:
             cache_entry = self._get_cached_filter(filter_dict)
@@ -1000,6 +1207,7 @@ class HNSWIndex:
             allowed_mask = cache_entry["allowed_mask"] if active_use_native else None
             matching_indices = cache_entry["matching_indices"]
             active_matching_ids = cache_entry["active_matching_ids"]
+            cached_vectors = cache_entry.get("cached_vectors")
             num_matching = len(allowed_set)
             
             # Selectivity-aware fallback:
@@ -1008,7 +1216,8 @@ class HNSWIndex:
                     query_c, allowed_set, k,
                     return_visited=return_visited,
                     matching_indices=matching_indices,
-                    active_matching_ids=active_matching_ids
+                    active_matching_ids=active_matching_ids,
+                    cached_vectors=cached_vectors
                 )
 
         curr_obj = self.entry_point
@@ -1045,7 +1254,13 @@ class HNSWIndex:
                         curr_obj = neighbors[min_idx]
                         changed = True
 
-        visit_budget = max(2000, ef * 20) if filter_dict else -1
+        # Scaled visit budget: c * ef / selectivity with cap
+        num_total_vectors = max(1, self.nodes.get_matrix().shape[0])
+        selectivity = len(allowed_set) / num_total_vectors if allowed_set is not None else 1.0
+        c_multiplier = 4.0
+        expected_budget = int(round(c_multiplier * ef / max(selectivity, 1e-4)))
+        budget_cap = min(10000, num_total_vectors)
+        visit_budget = min(budget_cap, max(ef, expected_budget)) if filter_dict else -1
         
         W, visited_count = self._search_layer(
             query_c, [curr_obj], ef, 0,
@@ -1057,18 +1272,36 @@ class HNSWIndex:
         )
         self.last_visited_count = visited_count if return_visited else 0
 
-        target_ef = min(ef, len(allowed_set)) if allowed_set is not None else ef
         target_k = min(k, len(allowed_set)) if allowed_set is not None else k
-        should_escalate = filter_dict and (len(W) < target_ef or (visit_budget > 0 and visited_count >= visit_budget))
+        
+        # Retry with expanded budget if fewer than k matches found
+        if filter_dict and len(W) < target_k:
+            retry_budget = min(20000, max(visit_budget * 2, 5000))
+            W_retry, visited_retry = self._search_layer(
+                query_c, [curr_obj], max(ef, target_k * 2), 0,
+                return_visited=True,
+                use_native=active_use_native,
+                allowed_mask=allowed_mask,
+                allowed_set=allowed_set,
+                visit_budget=retry_budget
+            )
+            visited_count += visited_retry
+            self.last_visited_count = visited_count
+            W = W_retry
+
+        # Escalate only if still fewer than k matches found after retry
+        should_escalate = filter_dict and (len(W) < target_k)
 
         if should_escalate:
+            self.escalation_count += 1
             results = self._search_brute_force_matching(
                 query_c,
                 allowed_set,
                 k=k,
                 return_visited=False,
                 matching_indices=matching_indices,
-                active_matching_ids=active_matching_ids
+                active_matching_ids=active_matching_ids,
+                cached_vectors=cached_vectors
             )
         else:
             W.sort(key=lambda x: x[1])
@@ -1083,18 +1316,26 @@ class HNSWIndex:
                         break
 
             if filter_dict and len(results) < target_k:
+                self.escalation_count += 1
                 results = self._search_brute_force_matching(
                     query_c,
                     allowed_set,
                     k=k,
                     return_visited=False,
                     matching_indices=matching_indices,
-                    active_matching_ids=active_matching_ids
+                    active_matching_ids=active_matching_ids,
+                    cached_vectors=cached_vectors
                 )
                         
         if return_visited:
             return results, visited_count
         return results
+
+    def get_escalation_count(self) -> int:
+        return self.escalation_count
+
+    def reset_escalation_count(self):
+        self.escalation_count = 0
 
     def search(self, query: np.ndarray, k: int, ef: int = None, filter_dict: dict = None, return_visited: bool = False, use_native: bool = None):
         with self.lock.read():

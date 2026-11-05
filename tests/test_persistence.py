@@ -106,7 +106,11 @@ def test_snapshot_roundtrip_recall():
         reloaded.nodes.close()
         reloaded.wal.close()
     finally:
-        shutil.rmtree(temp_dir)
+        if hasattr(index.nodes, "close"):
+            index.nodes.close()
+        if index.wal:
+            index.wal.close()
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 def test_cached_filter_bitmap_wal_replay_and_incremental():
     temp_dir = tempfile.mkdtemp()
@@ -194,4 +198,8 @@ def test_cached_filter_bitmap_wal_replay_and_incremental():
         reloaded.nodes.close()
         reloaded.wal.close()
     finally:
-        shutil.rmtree(temp_dir)
+        if hasattr(index.nodes, "close"):
+            index.nodes.close()
+        if index.wal:
+            index.wal.close()
+        shutil.rmtree(temp_dir, ignore_errors=True)
