@@ -100,3 +100,69 @@ def test_edge_cases():
     for d in dists:
         assert np.isclose(d, 0.0, atol=1e-5)
     assert len(res) == 3
+
+def test_filtered_recall_regression():
+    """Regression test: filtered search achieves >= 90% recall at 50% and 10% selectivity on 5,000 vectors."""
+    np.random.seed(123)
+    num_vectors = 5000
+    dim = 64
+    k = 10
+    num_queries = 40
+
+    vectors = np.random.randn(num_vectors, dim).astype(np.float32)
+    queries = np.random.randn(num_queries, dim).astype(np.float32)
+
+    config = HNSWConfig(M=16, ef_construction=100, ef_search=50)
+    index = HNSWIndex(config=config, metric="l2")
+
+    # 50% category ('A' vs 'B') and 10% category ('val_0' through 'val_9')
+    metadatas = []
+    for i in range(num_vectors):
+        meta = {
+            "is_even": (i % 2 == 0),         # 50% selectivity
+            "cluster_10": f"c_{i % 10}"      # 10% selectivity
+        }
+        metadatas.append(meta)
+
+    index.batch_insert(vectors, node_ids=list(range(num_vectors)), metadatas=metadatas)
+
+    # 1. Test 50% selectivity (is_even == True)
+    matching_50 = np.array([i for i in range(num_vectors) if metadatas[i]["is_even"] is True])
+    vecs_50 = vectors[matching_50]
+
+    recalls_50 = []
+    for q in queries:
+        hnsw_res = index.search(q, k=k, filter_dict={"is_even": True})
+        hnsw_ids = {n_id for n_id, _, _ in hnsw_res}
+
+        # Brute force over matching
+        dists = np.sum((vecs_50 - q) ** 2, axis=1)
+        top_k_idx = np.argsort(dists)[:k]
+        gt_ids = set(matching_50[top_k_idx])
+
+        recalls_50.append(len(hnsw_ids.intersection(gt_ids)) / float(k))
+
+    avg_recall_50 = float(np.mean(recalls_50))
+    print(f"Filtered Recall @ 50% selectivity: {avg_recall_50:.4f}")
+    assert avg_recall_50 >= 0.90, f"50% selectivity recall {avg_recall_50:.4f} fell below 0.90 threshold"
+
+    # 2. Test 10% selectivity (cluster_10 == 'c_0')
+    matching_10 = np.array([i for i in range(num_vectors) if metadatas[i]["cluster_10"] == "c_0"])
+    vecs_10 = vectors[matching_10]
+
+    recalls_10 = []
+    for q in queries:
+        hnsw_res = index.search(q, k=k, filter_dict={"cluster_10": "c_0"})
+        hnsw_ids = {n_id for n_id, _, _ in hnsw_res}
+
+        # Brute force over matching
+        dists = np.sum((vecs_10 - q) ** 2, axis=1)
+        top_k_idx = np.argsort(dists)[:k]
+        gt_ids = set(matching_10[top_k_idx])
+
+        recalls_10.append(len(hnsw_ids.intersection(gt_ids)) / float(k))
+
+    avg_recall_10 = float(np.mean(recalls_10))
+    print(f"Filtered Recall @ 10% selectivity: {avg_recall_10:.4f}")
+    assert avg_recall_10 >= 0.90, f"10% selectivity recall {avg_recall_10:.4f} fell below 0.90 threshold"
+

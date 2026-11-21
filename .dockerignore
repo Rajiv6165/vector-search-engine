@@ -1,0 +1,17 @@
+.git
+.github
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.so
+venv
+ci_env
+build
+dist
+*.egg-info
+.coverage
+htmlcov
+vsearch_data
+*.lock

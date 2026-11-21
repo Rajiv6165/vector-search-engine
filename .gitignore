@@ -226,3 +226,5 @@ benchmarks/data/
 *.bvecs
 *.tar.gz
 *.npy
+vsearch_data/
+

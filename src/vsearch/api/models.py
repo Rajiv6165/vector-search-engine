@@ -74,9 +74,16 @@ class BatchSearchRequest(BaseModel):
 class BatchSearchResponse(BaseModel):
     results: List[List[SearchResult]]
 
+class HealthResponse(BaseModel):
+    status: str
+
 class StatsResponse(BaseModel):
     size: int
     dim: int
     max_level: int
     entry_point: Optional[int]
     config: Dict[str, Any]
+    native: bool
+    version: str
+    ready: bool = True
+    progress: Optional[float] = None

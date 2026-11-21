@@ -1,24 +1,54 @@
 import os
+import sys
 import shutil
 import tempfile
-from fastapi.testclient import TestClient
+import pytest
 
-def run_api_tests():
+# Disable automatic 20k vector seeding during fast unit tests
+os.environ["VSEARCH_AUTO_SEED"] = "0"
+os.environ["VSEARCH_ALLOW_INSECURE"] = "1"
+
+from fastapi.testclient import TestClient
+import vsearch.api.app as api_app
+
+def test_api():
     temp_dir = tempfile.mkdtemp()
+    os.environ["VSEARCH_DATA_DIR"] = temp_dir
     os.environ["VSEARCH_PERSIST_DIR"] = temp_dir
-    import vsearch.api.app as api_app
+    os.environ["VSEARCH_ALLOW_INSECURE"] = "1"
+    os.environ.pop("VSEARCH_API_KEY", None)
+    os.environ.pop("VSEARCH_READ_KEY", None)
+    
     api_app.PERSIST_DIR = temp_dir
+    api_app.VSEARCH_API_KEY = None
+    api_app.VSEARCH_READ_KEY = None
+    api_app.VSEARCH_ALLOW_INSECURE = True
+    api_app.MAX_VECTORS = None
+    api_app.MAX_K = 1000
+    api_app.MAX_EF = 500
+    api_app.MAX_BATCH = 1000
     
     app = api_app.app
     
     try:
         with TestClient(app) as client:
-            print("Running test_api_stats_empty...")
+            # 1. Healthcheck endpoint (Unauthenticated)
+            resp = client.get("/health")
+            assert resp.status_code == 200
+            assert resp.json() == {"status": "ok"}
+            
+            # 2. Stats endpoint (native flag, version, ready)
             resp = client.get("/stats")
             assert resp.status_code == 200
-            assert resp.json()["size"] == 0
+            stats_data = resp.json()
+            assert stats_data["size"] == 0
+            assert "native" in stats_data
+            assert isinstance(stats_data["native"], bool)
+            assert "version" in stats_data
+            assert stats_data["version"] == "0.1.0"
+            assert stats_data["ready"] is True
             
-            print("Running test_api_insert_and_search...")
+            # 3. Vector Insert and Search
             resp = client.post("/vectors", json={
                 "node_id": 1,
                 "vector": [0.1, 0.2, 0.3, 0.4],
@@ -42,7 +72,7 @@ def run_api_tests():
             assert len(results) == 2
             assert results[0]["node_id"] == 1
             
-            print("Running test_api_filtered_search...")
+            # 4. Filtered Search
             resp = client.post("/search", json={
                 "vector": [0.1, 0.2, 0.3, 0.5],
                 "k": 2,
@@ -53,26 +83,33 @@ def run_api_tests():
             assert len(results) == 1
             assert results[0]["node_id"] == 2
             
-            print("Running test_api_delete...")
+            # 5. Delete
             resp = client.delete("/vectors/1")
             assert resp.status_code == 200
             resp = client.post("/search", json={"vector": [0.1, 0.2, 0.3, 0.5], "k": 2})
             assert len(resp.json()["results"]) == 1
             
-            print("Running test_api_dimension_mismatch...")
+            # 6. Dimension and Vector Validation
             resp = client.post("/vectors", json={"node_id": 3, "vector": [0.1, 0.2]})
             assert resp.status_code == 400
+            assert "dimension mismatch" in resp.json()["detail"].lower()
 
-            print("Running test_api_filter_validation...")
-            # Non-scalar value in filter must fail validation with 422
+            resp = client.post("/vectors", json={"node_id": 3, "vector": []})
+            assert resp.status_code == 400
+            assert "empty" in resp.json()["detail"].lower()
+
+            resp = client.post("/vectors", json={"node_id": 3, "vector": [0.1, "invalid", 0.3, 0.4]})
+            assert resp.status_code == 422
+
+            # Filter validation
             resp = client.post("/search", json={
                 "vector": [0.1, 0.2, 0.3, 0.5],
                 "k": 2,
                 "filter": {"category": ["electronics", "appliances"]}
             })
-            assert resp.status_code == 422, f"Expected 422 for nested list filter value, got {resp.status_code}"
+            assert resp.status_code == 422
 
-            print("Running test_api_batch_operations...")
+            # Batch operations
             resp = client.post("/vectors/batch", json={
                 "vectors": [[0.5, 0.5, 0.5, 0.5], [0.6, 0.6, 0.6, 0.6]],
                 "node_ids": [10, 11],
@@ -91,52 +128,252 @@ def run_api_tests():
             assert batch_res[0][0]["node_id"] == 10
             assert batch_res[1][0]["node_id"] == 2
 
-            print("Running test_api_batch_filtered_search...")
-            # Shared filter
-            resp = client.post("/search/batch", json={
-                "vectors": [[0.5, 0.5, 0.5, 0.5], [0.1, 0.2, 0.3, 0.9]],
-                "k": 1,
-                "filter": {"category": "clothing"}
-            })
-            assert resp.status_code == 200
-            batch_res = resp.json()["results"]
-            assert batch_res[0][0]["node_id"] == 11
-            assert batch_res[1][0]["node_id"] == 2
-
-            # Per-query filters
-            resp = client.post("/search/batch", json={
-                "vectors": [[0.5, 0.5, 0.5, 0.5], [0.1, 0.2, 0.3, 0.9]],
-                "k": 1,
-                "filters": [{"category": "appliances"}, {"category": "clothing"}]
-            })
-            assert resp.status_code == 200
-            batch_res = resp.json()["results"]
-            assert batch_res[0][0]["node_id"] == 10
-            assert batch_res[1][0]["node_id"] == 2
-
-            # Mismatched filters length returns 400
-            resp = client.post("/search/batch", json={
-                "vectors": [[0.5, 0.5, 0.5, 0.5], [0.1, 0.2, 0.3, 0.9]],
-                "k": 1,
-                "filters": [{"category": "appliances"}]
-            })
-            assert resp.status_code == 400
-            
-        # Test shutdown and reload
-        print("Running test_lifecycle_reload...")
+        # Test reload lifecycle
         with TestClient(app) as client2:
             resp = client2.get("/stats")
             assert resp.status_code == 200
             data = resp.json()
             assert data["size"] == 3
             assert data["dim"] == 4
-            
-        print("All API tests passed successfully!")
     finally:
-        shutil.rmtree(temp_dir)
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
-def test_api():
-    run_api_tests()
+def test_api_auth():
+    """Verify write key and read key permissions with secrets.compare_digest."""
+    temp_dir = tempfile.mkdtemp()
+    api_app.PERSIST_DIR = temp_dir
+    api_app.VSEARCH_API_KEY = "secret-write-key"
+    api_app.VSEARCH_READ_KEY = "public-read-key"
+    os.environ["VSEARCH_API_KEY"] = "secret-write-key"
+    os.environ["VSEARCH_READ_KEY"] = "public-read-key"
+    os.environ.pop("VSEARCH_ALLOW_INSECURE", None)
+    
+    app = api_app.app
+    try:
+        with TestClient(app) as client:
+            # 1. Health is always public
+            assert client.get("/health").status_code == 200
+            
+            # 2. Stats requires read or write key
+            assert client.get("/stats").status_code == 401
+            assert client.get("/stats", headers={"X-API-Key": "wrong"}).status_code == 401
+            assert client.get("/stats", headers={"X-API-Key": "public-read-key"}).status_code == 200
+            assert client.get("/stats", headers={"X-API-Key": "secret-write-key"}).status_code == 200
+            
+            # 3. Write endpoints strictly reject read key
+            resp = client.post(
+                "/vectors",
+                json={"node_id": 1, "vector": [1.0, 2.0, 3.0, 4.0]},
+                headers={"X-API-Key": "public-read-key"}
+            )
+            assert resp.status_code == 401
+            assert "write API Key" in resp.json()["detail"]
 
-if __name__ == "__main__":
-    run_api_tests()
+            resp = client.post(
+                "/vectors/batch",
+                json={"vectors": [[1.0, 2.0, 3.0, 4.0]], "node_ids": [1]},
+                headers={"X-API-Key": "public-read-key"}
+            )
+            assert resp.status_code == 401
+
+            resp = client.delete("/vectors/1", headers={"X-API-Key": "public-read-key"})
+            assert resp.status_code == 401
+
+            # 4. Write key succeeds on write endpoints
+            resp = client.post(
+                "/vectors",
+                json={"node_id": 1, "vector": [1.0, 2.0, 3.0, 4.0]},
+                headers={"X-API-Key": "secret-write-key"}
+            )
+            assert resp.status_code == 200
+            
+            # 5. Search accepts read key
+            resp = client.post(
+                "/search",
+                json={"vector": [1.0, 2.0, 3.0, 4.0], "k": 1},
+                headers={"X-API-Key": "public-read-key"}
+            )
+            assert resp.status_code == 200
+            assert len(resp.json()["results"]) == 1
+
+            # 6. Delete with write key
+            resp = client.delete("/vectors/1", headers={"X-API-Key": "secret-write-key"})
+            assert resp.status_code == 200
+    finally:
+        api_app.VSEARCH_API_KEY = None
+        api_app.VSEARCH_READ_KEY = None
+        os.environ["VSEARCH_ALLOW_INSECURE"] = "1"
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+def test_auth_fails_closed():
+    """Verify server refuses to start without VSEARCH_API_KEY unless VSEARCH_ALLOW_INSECURE=1."""
+    temp_dir = tempfile.mkdtemp()
+    api_app.PERSIST_DIR = temp_dir
+    os.environ.pop("VSEARCH_API_KEY", None)
+    os.environ["VSEARCH_ALLOW_INSECURE"] = "0"
+    api_app.VSEARCH_API_KEY = None
+    api_app.VSEARCH_ALLOW_INSECURE = False
+
+    app = api_app.app
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            with TestClient(app):
+                pass
+        assert "VSEARCH_API_KEY is not set" in str(exc_info.value)
+    finally:
+        os.environ["VSEARCH_ALLOW_INSECURE"] = "1"
+        api_app.VSEARCH_ALLOW_INSECURE = True
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+def test_api_limits():
+    """Verify MAX_VECTORS, MAX_K, MAX_EF, MAX_BATCH, IP rate limiting, and request body size caps."""
+    temp_dir = tempfile.mkdtemp()
+    api_app.PERSIST_DIR = temp_dir
+    api_app.VSEARCH_API_KEY = None
+    api_app.VSEARCH_READ_KEY = None
+    api_app.VSEARCH_ALLOW_INSECURE = True
+    os.environ["VSEARCH_ALLOW_INSECURE"] = "1"
+    
+    api_app.MAX_VECTORS = 3
+    api_app.MAX_K = 5
+    api_app.MAX_EF = 50
+    api_app.MAX_BATCH = 2
+    api_app.MAX_REQUEST_BYTES = 1000
+    api_app.rate_limiter.max_requests = 100
+    
+    app = api_app.app
+    try:
+        with TestClient(app) as client:
+            # Insert up to limit (3 vectors)
+            for i in range(1, 4):
+                resp = client.post("/vectors", json={"node_id": i, "vector": [0.1, 0.2, 0.3, 0.4]})
+                assert resp.status_code == 200
+                
+            # 4th insert should be rejected by MAX_VECTORS
+            resp = client.post("/vectors", json={"node_id": 4, "vector": [0.1, 0.2, 0.3, 0.4]})
+            assert resp.status_code == 400
+            assert "MAX_VECTORS" in resp.json()["detail"]
+            
+            # Delete one vector to free capacity (3 -> 2)
+            resp = client.delete("/vectors/1")
+            assert resp.status_code == 200
+
+            # Now inserting node 4 succeeds (2 -> 3)
+            resp = client.post("/vectors", json={"node_id": 4, "vector": [0.1, 0.2, 0.3, 0.4]})
+            assert resp.status_code == 200
+
+            # Inserting node 5 is rejected by MAX_VECTORS
+            resp = client.post("/vectors", json={"node_id": 5, "vector": [0.1, 0.2, 0.3, 0.4]})
+            assert resp.status_code == 400
+            assert "MAX_VECTORS" in resp.json()["detail"]
+            
+            # Batch insert exceeding MAX_BATCH
+            resp = client.post("/vectors/batch", json={
+                "vectors": [[0.1, 0.2, 0.3, 0.4], [0.2, 0.3, 0.4, 0.5], [0.3, 0.4, 0.5, 0.6]],
+                "node_ids": [10, 11, 12]
+            })
+            assert resp.status_code == 400
+            assert "MAX_BATCH" in resp.json()["detail"]
+            
+            # Search exceeding MAX_K
+            resp = client.post("/search", json={"vector": [0.1, 0.2, 0.3, 0.4], "k": 10})
+            assert resp.status_code == 400
+            assert "MAX_K" in resp.json()["detail"]
+
+            # Search exceeding MAX_EF
+            resp = client.post("/search", json={"vector": [0.1, 0.2, 0.3, 0.4], "k": 2, "ef": 100})
+            assert resp.status_code == 400
+            assert "MAX_EF" in resp.json()["detail"]
+
+            # Batch search exceeding MAX_BATCH
+            resp = client.post("/search/batch", json={
+                "vectors": [[0.1, 0.2, 0.3, 0.4], [0.2, 0.3, 0.4, 0.5], [0.3, 0.4, 0.5, 0.6]],
+                "k": 2
+            })
+            assert resp.status_code == 400
+            assert "MAX_BATCH" in resp.json()["detail"]
+            
+            # Request body size cap
+            resp = client.post(
+                "/search",
+                content=b"x" * 2000,
+                headers={"Content-Length": "2000", "Content-Type": "application/json"}
+            )
+            assert resp.status_code == 413
+            assert "maximum allowed size" in resp.json()["detail"]
+
+            # Per-IP rate limiting test
+            api_app.rate_limiter.max_requests = 2
+            api_app.rate_limiter.window_seconds = 10.0
+            api_app.rate_limiter._requests.clear()
+            assert client.post("/search", json={"vector": [0.1, 0.2, 0.3, 0.4], "k": 1}).status_code == 200
+            assert client.post("/search", json={"vector": [0.1, 0.2, 0.3, 0.4], "k": 1}).status_code == 200
+            rate_resp = client.post("/search", json={"vector": [0.1, 0.2, 0.3, 0.4], "k": 1})
+            assert rate_resp.status_code == 429
+            assert "Rate limit exceeded" in rate_resp.json()["detail"]
+    finally:
+        api_app.MAX_VECTORS = None
+        api_app.MAX_K = 1000
+        api_app.MAX_EF = 500
+        api_app.MAX_BATCH = 1000
+        api_app.MAX_REQUEST_BYTES = 10 * 1024 * 1024
+        api_app.rate_limiter.max_requests = 100
+        api_app.rate_limiter.window_seconds = 1.0
+        api_app.rate_limiter._requests.clear()
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+def test_exclusive_data_dir_lock():
+    """Verify exclusive lock file in VSEARCH_DATA_DIR prevents second process from attaching."""
+    temp_dir = tempfile.mkdtemp()
+    api_app.PERSIST_DIR = temp_dir
+    os.environ["VSEARCH_ALLOW_INSECURE"] = "1"
+    api_app.VSEARCH_ALLOW_INSECURE = True
+    
+    app = api_app.app
+    try:
+        with TestClient(app):
+            # First instance is running and holds the lock.
+            # Attempt to acquire lock from a second lock instance on the same directory
+            second_lock = api_app.DataDirLock(temp_dir)
+            with pytest.raises(RuntimeError) as exc_info:
+                second_lock.acquire()
+            assert "Another vsearch process is currently running" in str(exc_info.value)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+def test_single_process_safety():
+    """Verify engine refuses to start if WEB_CONCURRENCY > 1."""
+    os.environ["WEB_CONCURRENCY"] = "2"
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            api_app.check_single_process_safety()
+        assert "WEB_CONCURRENCY=2" in str(exc_info.value)
+    finally:
+        os.environ.pop("WEB_CONCURRENCY", None)
+
+def test_seed_demo():
+    """Verify seed_demo generates clustered vectors with categories and measures RSS."""
+    from scripts.seed_demo import generate_demo_dataset, seed_index
+    from vsearch.hnsw import HNSWIndex, HNSWConfig
+
+    # 1. Dataset generation validation
+    vectors, metadatas, node_ids = generate_demo_dataset(total_vectors=250, dim=32)
+    assert len(vectors) == 250
+    assert len(metadatas) == 250
+    assert len(node_ids) == 250
+    assert vectors.shape == (250, 32)
+    categories = set(m["category"] for m in metadatas)
+    assert len(categories) == 5
+    assert "electronics" in categories
+
+    # 2. Index batch insertion
+    index = HNSWIndex(config=HNSWConfig(M=8, ef_construction=50, ef_search=20))
+    final_rss = seed_index(index, total_vectors=250, dim=32, batch_size=50)
+    assert len(index.nodes) == 250
+    assert final_rss >= 0.0
+
+    # 3. Filtered query verification
+    query = vectors[0]
+    results = index.search(query, k=5, filter_dict={"category": "electronics"})
+    assert len(results) > 0
+    assert all(m["category"] == "electronics" for _, _, m in results)

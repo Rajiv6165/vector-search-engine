@@ -1,0 +1,28 @@
+# render.yaml - Render Blueprint configuration for vsearch
+services:
+  - type: web
+    name: vsearch-engine
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: VSEARCH_DATA_DIR
+        value: /app/vsearch_data
+      - key: VSEARCH_SNAPSHOT_INTERVAL
+        value: "300"
+      - key: VSEARCH_SEED_ON_START
+        value: "1"
+      - key: VSEARCH_MAX_VECTORS
+        value: "50000"
+      - key: VSEARCH_MAX_K
+        value: "500"
+      - key: VSEARCH_MAX_BATCH
+        value: "1000"
+      - key: VSEARCH_API_KEY
+        sync: false
+      - key: VSEARCH_READ_KEY
+        sync: false

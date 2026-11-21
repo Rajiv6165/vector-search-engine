@@ -76,18 +76,36 @@ Production vector queries typically require categorical metadata filters (e.g. `
 `vsearch` implements a defensible hybrid filtered search subsystem:
 - **Bounded LRU Cache with Per-(field, value) Bitmaps**: Maintains bitmasks and contiguous vector copies strictly per `(field, value)` pair under an LRU memory budget (`max_entries=1000`, `max_bytes=256MB`), eliminating combinatorial cache bloat and keeping insert check latency at **0.48 us** ($O(1)$). Multi-field filters are resolved by bitwise ANDing at query time.
 - **In-Graph Graph Traversal**: Explores through non-matching bridge nodes to preserve small-world graph reachability, while only admitting matching candidates into the result set.
-- **Adaptive Scaled Visit Budget**: Scales search budgets to expected demand ($\min(10000, \max(ef, \text{round}(4 \cdot ef / S)))$).
-- **Refined Defensive Escalation**: Detects when graph traversal is trapped in disconnected clusters and escalates to exact brute force **only if fewer than $k$ matches were found after an expanded-budget retry**. On Correlated 10%, this achieves **876.1 QPS** (a 7.2x speedup over crude escalation) with a 0.5% escalation rate.
-- **Selectivity-Aware Fallback ($M \le 2,000$)**: For small subsets where post-filtering is the wrong tool, the engine automatically routes to exact SIMD brute force over cached contiguous vectors, achieving **up to 11,680 QPS** with **100.00% exact recall** (**88x to 645x faster** than post-filtering).
+- **Adaptive Scaled Visit Budget with Base Floor**: Scales search budgets to expected demand ($\min(10000, \max(\max(1500, ef \cdot 20), \text{round}(10.0 \cdot ef / S)))$), guaranteeing that graph search is never prematurely starved of candidate explorations at high or correlated selectivities.
+- **Refined Defensive Escalation**: Detects when graph traversal is trapped in disconnected clusters and escalates to exact brute force **only if fewer than $k$ matches were found after an expanded-budget retry**. Across all benchmarks, the escalation rate is **0.0%**, achieving **97.3% recall at 1,119 QPS** on Correlated 10% and exceeding the 95% target across all 8 regimes ($\ge 96.1\%$ to $100.0\%$).
+- **Selectivity-Aware Fallback ($M \le 2,000$)**: For small subsets where post-filtering is the wrong tool, the engine automatically routes to exact SIMD brute force over cached contiguous vectors, achieving **up to 24,073 QPS** with **100.00% exact recall** (**88x to 838x faster** than post-filtering).
 
 | Selectivity | Matching Nodes | Adaptive Post-Filter ($c$, $ef$, Rec / QPS / p95) | In-Graph Only (Recall / QPS) | Shipped Engine (Recall / QPS / Escalation) | Speedup / Defensible Takeaway |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **50%** | 50,000 | $c=16, ef=320$: 100.0% / 390 QPS / 3.07ms | 92.0% / **3,236 QPS** | **87.3% / 2,950 QPS (Esc: 0.0%)** | **In-Graph is 7.6x faster than Post-Filter** |
-| **10%** | 10,000 | $c=4, ef=400$: 100.0% / 324 QPS / 4.06ms | 98.5% / **1,290 QPS** | **98.5% / 1,159 QPS (Esc: 0.0%)** | **In-Graph is 3.6x faster than Post-Filter** |
-| **1%**  | 1,000  | $c=4, ef=4000$: 100.0% / 35 QPS / 39.37ms | 99.8% / 298 QPS | **100.0% / 3,104 QPS (Esc: 0.0%)** | **Post-filter is wrong tool; Fallback is 88x faster** |
-| **0.1%**| 100    | $c=1, ef=10000$: 83.2% / 18 QPS / 184.67ms | 71.1% / 278 QPS | **100.0% / 11,681 QPS (Esc: 0.0%)**| **Post-filter collapses; Fallback is 645x faster** |
+| **50%** | 50,000 | $c=16, ef=320$: 100.0% / 492 QPS / 2.71ms | 99.3% / **3,278 QPS** | **99.3% / 2,569 QPS (Esc: 0.0%)** | **In-Graph is 5.2x faster than Post-Filter** |
+| **10%** | 10,000 | $c=4, ef=400$: 100.0% / 613 QPS / 2.40ms | 100.0% / **1,265 QPS** | **100.0% / 1,194 QPS (Esc: 0.0%)** | **In-Graph is 1.95x faster than Post-Filter** |
+| **1%**  | 1,000  | $c=4, ef=4000$: 100.0% / 66 QPS / 16.82ms | 99.8% / 490 QPS | **100.0% / 5,789 QPS (Esc: 0.0%)** | **Post-filter is wrong tool; Fallback is 88x faster** |
+| **0.1%**| 100    | $c=2, ef=10000$: 83.2% / 29 QPS / 116.69ms | 71.1% / 454 QPS | **100.0% / 21,638 QPS (Esc: 0.0%)**| **Post-filter collapses (83%); Fallback is 750x faster** |
+
+> **Note on Benchmark Comparisons**: Results across different benchmark states and historical iterations were measured in separate test sessions under distinct hardware and system loads; they demonstrate relative architectural scaling rather than direct wall-clock comparisons across rows.
 
 Read the complete engineering analysis, profiling breakdowns, and mathematical proofs: [Phase 10 Filtered Search Report](PHASE10_FILTERED_SEARCH.md) and the comprehensive [Architecture Explainer](ARCHITECTURE_EXPLAINER.md).
+
+## Production Deployment & Operations (Phase 11)
+
+`vsearch` is hardened and safe to expose publicly with environment-driven runtime configuration, role-based API keys, process safety enforcement, and automated demo seeding:
+
+- **Single-Process Safety**: To prevent corrupting in-memory small-world graph pointers and memmap WAL logs across concurrent OS processes, `vsearch` strictly enforces single-process concurrency (`--workers 1`), aborting on startup if `WEB_CONCURRENCY > 1` or `--workers > 1` is supplied.
+- **Dual-Tier Authentication**:
+  - `VSEARCH_API_KEY` (Write Key): Required for mutations (`POST /vectors`, `POST /vectors/batch`, `DELETE /vectors/{id}`).
+  - `VSEARCH_READ_KEY` (Read Key): Grants access to `POST /search`, `POST /search/batch`, and `GET /stats`. Write operations attempted with the read key are rejected with HTTP 401.
+  - `GET /health` is unauthenticated for container orchestrators.
+- **Defensive Production Caps**: Configurable limits via `VSEARCH_MAX_VECTORS` (rejects inserts past cap), `VSEARCH_MAX_K` (caps nearest neighbors), `VSEARCH_MAX_BATCH` (caps batch payload size), and request body byte limits (HTTP 413).
+- **Automated Demo Seeding**: `scripts/seed_demo.py` seeds ~20,000 clustered 64-d vectors with categorical metadata in batches when the data directory is empty, or on every start if `VSEARCH_SEED_ON_START=1` (tested process RSS: **105.88 MB**).
+- **Deployment Blueprints**: Pre-configured `fly.toml` (Fly.io with dedicated volume mounted at `/data`) and `render.yaml` (Render Blueprint free web service).
+- **Verification Smoke Test**: `scripts/smoke_test.py` validates `/health`, `/stats` native flag, unfiltered queries, categorical filtered queries, and key restriction enforcement against any live URL.
+
+For detailed deployment commands and environment variable defaults, see [Deployment Guide](DEPLOYMENT.md).
 
 ## Quickstart (Local & Docker)
 

@@ -298,6 +298,8 @@ class WALManager:
             header = struct.pack('<BI', 1, node_id)
             vec_bytes = vector.astype(np.float32).tobytes()
             self.file.write(header + vec_bytes)
+        if self.file:
+            self.file.flush()
         self.writes_since_flush += 1
         if self.writes_since_flush >= self.batch_size:
             self.flush()
@@ -305,6 +307,8 @@ class WALManager:
     def log_delete(self, node_id: int):
         header = struct.pack('<BI', 2, node_id)
         self.file.write(header)
+        if self.file:
+            self.file.flush()
         self.writes_since_flush += 1
         if self.writes_since_flush >= self.batch_size:
             self.flush()
@@ -698,24 +702,41 @@ class HNSWIndex:
             metadata["node_id_to_index"] = self.nodes.node_id_to_index
             metadata["size"] = self.nodes.size
             
-        with open(os.path.join(path, "metadata.json"), "w") as f:
+        meta_tmp = os.path.join(path, "metadata.json.tmp")
+        meta_target = os.path.join(path, "metadata.json")
+        with open(meta_tmp, "w") as f:
             json.dump(metadata, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(meta_tmp, meta_target)
             
-        with open(os.path.join(path, "metadata_store.json"), "w") as f:
+        store_tmp = os.path.join(path, "metadata_store.json.tmp")
+        store_target = os.path.join(path, "metadata_store.json")
+        with open(store_tmp, "w") as f:
             json.dump(self.metadata_store, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(store_tmp, store_target)
 
         vec_file = os.path.join(path, "vectors.bin")
         if isinstance(self.nodes, VectorStore):
-            self.nodes.mmap.flush()
-            if os.path.abspath(self.nodes.filepath) != os.path.abspath(vec_file):
+            if self.nodes.mmap is not None:
+                self.nodes.mmap.flush()
+            if os.path.abspath(self.nodes.filepath) != os.path.abspath(vec_file) and os.path.exists(self.nodes.filepath):
                 import shutil
                 shutil.copyfile(self.nodes.filepath, vec_file)
         elif isinstance(self.nodes, ContiguousVectorStore):
             if self.nodes.vectors is not None:
-                with open(vec_file, "wb") as f:
+                vec_tmp = os.path.join(path, "vectors.bin.tmp")
+                with open(vec_tmp, "wb") as f:
                     f.write(self.nodes.vectors[:self.nodes.size].tobytes())
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(vec_tmp, vec_file)
             
-        with open(os.path.join(path, "graph.bin"), "wb") as f:
+        graph_tmp = os.path.join(path, "graph.bin.tmp")
+        graph_target = os.path.join(path, "graph.bin")
+        with open(graph_tmp, "wb") as f:
             f.write(struct.pack('<I', len(self.graphs)))
             for level_graph in self.graphs:
                 f.write(struct.pack('<I', len(level_graph)))
@@ -724,6 +745,9 @@ class HNSWIndex:
                     f.write(struct.pack('<I', len(edges)))
                     if edges:
                         f.write(struct.pack(f'<{len(edges)}I', *edges))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(graph_tmp, graph_target)
                         
         if self.wal:
             self.wal.truncate()
@@ -1254,13 +1278,14 @@ class HNSWIndex:
                         curr_obj = neighbors[min_idx]
                         changed = True
 
-        # Scaled visit budget: c * ef / selectivity with cap
+        # Scaled visit budget: c * ef / selectivity with base floor and cap
         num_total_vectors = max(1, self.nodes.get_matrix().shape[0])
         selectivity = len(allowed_set) / num_total_vectors if allowed_set is not None else 1.0
-        c_multiplier = 4.0
+        c_multiplier = 10.0
         expected_budget = int(round(c_multiplier * ef / max(selectivity, 1e-4)))
         budget_cap = min(10000, num_total_vectors)
-        visit_budget = min(budget_cap, max(ef, expected_budget)) if filter_dict else -1
+        base_floor = max(1500, ef * 20)
+        visit_budget = min(budget_cap, max(base_floor, expected_budget)) if filter_dict else -1
         
         W, visited_count = self._search_layer(
             query_c, [curr_obj], ef, 0,

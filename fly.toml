@@ -1,0 +1,31 @@
+# fly.toml - Fly.io configuration for vsearch
+app = "vsearch-engine"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  VSEARCH_DATA_DIR = "/data"
+  VSEARCH_SNAPSHOT_INTERVAL = "300"
+  VSEARCH_MAX_VECTORS = "100000"
+  VSEARCH_MAX_K = "1000"
+  VSEARCH_MAX_BATCH = "1000"
+  VSEARCH_SEED_ON_START = "0"
+
+[mounts]
+  source = "vsearch_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

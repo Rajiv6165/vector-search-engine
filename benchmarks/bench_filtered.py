@@ -186,9 +186,9 @@ def main():
         res_bf, qps_bf, p95_bf = measure_brute_force(index, query_vectors, k=10, filter_dict=fdict)
         rec_bf = compute_recall(res_bf, gt_sweep, k=10)
 
-        # Budget scaled as 4 * ef / sel
+        # Budget scaled matching engine formula: min(10000, max(1500, int(round(10.0 * 50 / sel_sw))))
         sel_sw = sz / len(base_vectors)
-        budget_sw = min(10000, max(50, int(round(4 * 50 / sel_sw))))
+        budget_sw = min(10000, max(1500, int(round(10.0 * 50 / sel_sw))))
         res_ig, qps_ig, p95_ig = measure_in_graph_custom(index, query_vectors, k=10, ef=50, filter_dict=fdict, visit_budget=budget_sw)
         rec_ig = compute_recall(res_ig, gt_sweep, k=10)
 
@@ -269,11 +269,11 @@ def main():
 
         # Pick best post-filter with highest recall, and among ties, highest QPS
         best_pf = max(pf_curves, key=lambda x: (round(x[0], 3), x[1]))
-        # Pick in-graph at scaled budget: min(10000, max(50, round(4 * 50 / sel)))
-        sel_budget = min(10000, max(50, int(round(4 * 50 / sel))))
-        # Find closest budget evaluated
-        closest_b_idx = int(np.argmin([abs(b - sel_budget) for b in budgets]))
-        default_ig = ig_curves[closest_b_idx]
+        # Pick in-graph at the exact scaled budget matching the engine: min(10000, max(1500, round(10.0 * 50 / sel)))
+        engine_budget = min(10000, max(1500, int(round(10.0 * 50 / sel))))
+        res_ig_engine, qps_ig_engine, p95_ig_engine = measure_in_graph_custom(index, query_vectors, k=k, ef=50, filter_dict=meta_dict, visit_budget=engine_budget)
+        rec_ig_engine = compute_recall(res_ig_engine, gt, k=k)
+        default_ig = (rec_ig_engine, qps_ig_engine, p95_ig_engine, engine_budget)
 
         print(f"  Adaptive Post-Filter (c={best_pf[4]}, ef={best_pf[3]}): Recall={best_pf[0]*100:.2f}%, QPS={best_pf[1]:.1f}, p95={best_pf[2]:.2f}ms")
         print(f"  In-Graph (budget={default_ig[3]}, ef=50):               Recall={default_ig[0]*100:.2f}%, QPS={default_ig[1]:.1f}, p95={default_ig[2]:.2f}ms")

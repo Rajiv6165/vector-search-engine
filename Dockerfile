@@ -3,7 +3,7 @@ FROM python:3.10-slim as builder
 
 WORKDIR /app
 
-# Install build dependencies if needed (for numpy/faiss etc)
+# Install build dependencies for compiling Cython C++ extension
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -26,7 +26,7 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install runtime OpenMP dependency (libgomp) to prevent silent fallback
+# Install runtime OpenMP dependency (libgomp1) to ensure native C++ acceleration
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
@@ -38,16 +38,22 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copy the source code
 COPY . /app
 
+# Generate and bake offline demo snapshot into the image for instant cold starts
+RUN python scripts/seed_demo.py --count 20000 --dim 64 --save-dir /app/demo_snapshot
+
 # Create directory for persistent data
 RUN mkdir -p /app/vsearch_data && chown -R 1000:1000 /app/vsearch_data
 VOLUME ["/app/vsearch_data"]
 
-# Set environment variables
+# Set default runtime environment variables
 ENV PYTHONPATH="/app"
+ENV VSEARCH_DATA_DIR="/app/vsearch_data"
 ENV VSEARCH_PERSIST_DIR="/app/vsearch_data"
+ENV VSEARCH_BAKED_SNAPSHOT_DIR="/app/demo_snapshot"
 ENV VSEARCH_SNAPSHOT_INTERVAL="300"
+ENV PORT="8000"
 
 EXPOSE 8000
 
-# Run the FastAPI server
-CMD ["uvicorn", "src.vsearch.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Single-process safety: Exactly one worker, port configured via $PORT
+CMD ["sh", "-c", "exec uvicorn src.vsearch.api.app:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
