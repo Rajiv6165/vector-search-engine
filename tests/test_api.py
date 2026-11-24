@@ -311,6 +311,10 @@ def test_api_limits():
             rate_resp = client.post("/search", json={"vector": [0.1, 0.2, 0.3, 0.4], "k": 1})
             assert rate_resp.status_code == 429
             assert "Rate limit exceeded" in rate_resp.json()["detail"]
+
+            # Requests from a different IP via X-Forwarded-For should succeed
+            diff_ip_resp = client.post("/search", json={"vector": [0.1, 0.2, 0.3, 0.4], "k": 1}, headers={"X-Forwarded-For": "198.51.100.42"})
+            assert diff_ip_resp.status_code == 200
     finally:
         api_app.MAX_VECTORS = None
         api_app.MAX_K = 1000

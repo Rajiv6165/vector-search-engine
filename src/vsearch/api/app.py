@@ -115,6 +115,16 @@ class IPRateLimiter:
             queue.append(now)
             return True
 
+def get_client_ip(request: Request) -> str:
+    """Extract client IP respecting X-Forwarded-For when behind a reverse proxy."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        # First IP in comma-separated chain is the originating client IP
+        return forwarded.split(",")[0].strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
 # ---------------------------------------------------------------------------
 # Configuration & Limits
 # ---------------------------------------------------------------------------
@@ -434,7 +444,7 @@ def search_vectors(req: SearchRequest, request: Request, api_key: str = Depends(
         raise HTTPException(status_code=500, detail="Index not initialized")
 
     # Rate limiting
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not rate_limiter.check_rate_limit(client_ip):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Too many search requests from this IP.")
 
@@ -470,7 +480,7 @@ def search_vectors_batch(req: BatchSearchRequest, request: Request, api_key: str
         raise HTTPException(status_code=500, detail="Index not initialized")
 
     # Rate limiting
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not rate_limiter.check_rate_limit(client_ip):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Too many search requests from this IP.")
 

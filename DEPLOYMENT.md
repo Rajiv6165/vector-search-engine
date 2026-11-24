@@ -149,10 +149,11 @@ Render allows instantaneous Docker deployments connected directly to GitHub.
    ```yaml
    services:
      - type: web
-       name: vsearch-engine
+       name: vsearch-demo
        runtime: docker
        plan: free
-       region: oregon
+       healthCheckPath: /health
+       region: singapore
        branch: main
        autoDeploy: true
        envVars:
@@ -163,13 +164,15 @@ Render allows instantaneous Docker deployments connected directly to GitHub.
          - key: VSEARCH_SNAPSHOT_INTERVAL
            value: "300"
          - key: VSEARCH_SEED_ON_START
-           value: "1"
+           value: "0"
          - key: VSEARCH_MAX_VECTORS
            value: "50000"
          - key: VSEARCH_MAX_K
+           value: "100"
+         - key: VSEARCH_MAX_EF
            value: "500"
          - key: VSEARCH_MAX_BATCH
-           value: "1000"
+           value: "100"
          - key: VSEARCH_API_KEY
            sync: false
          - key: VSEARCH_READ_KEY
