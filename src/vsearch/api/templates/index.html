@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vsearch &mdash; Vector Search Engine Demo</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --surface: #131b2e;
+      --surface-border: #1f2d4a;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --primary: #38bdf8;
+      --primary-hover: #0ea5e9;
+      --accent: #818cf8;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --radius: 10px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      line-height: 1.5;
+      padding: 2rem 1rem;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .container {
+      max-width: 900px;
+      width: 100%;
+    }
+
+    header {
+      margin-bottom: 2rem;
+      text-align: center;
+    }
+
+    h1 {
+      font-size: 2.25rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+      background: linear-gradient(135deg, #38bdf8, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .lead {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      max-width: 720px;
+      margin: 0 auto 1rem auto;
+    }
+
+    .meta-note {
+      font-size: 0.85rem;
+      color: #64748b;
+      margin-bottom: 1.25rem;
+    }
+
+    .header-links {
+      display: flex;
+      justify-content: center;
+      gap: 1.5rem;
+      margin-top: 0.75rem;
+    }
+
+    .header-links a {
+      color: var(--primary);
+      text-decoration: none;
+      font-size: 0.95rem;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      transition: color 0.15s ease;
+    }
+
+    .header-links a:hover {
+      color: var(--primary-hover);
+      text-decoration: underline;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    }
+
+    .controls-grid {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 1rem;
+      align-items: end;
+    }
+
+    @media (max-width: 640px) {
+      .controls-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+
+    label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    select, input {
+      background: #0f172a;
+      border: 1px solid var(--surface-border);
+      border-radius: 6px;
+      padding: 0.65rem 0.85rem;
+      color: var(--text-main);
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+
+    select:focus, input:focus {
+      border-color: var(--primary);
+    }
+
+    button {
+      background: var(--primary);
+      color: #0b0f19;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      padding: 0.65rem 1.25rem;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: background-color 0.15s ease, transform 0.05s ease;
+      white-space: nowrap;
+    }
+
+    button:hover {
+      background: var(--primary-hover);
+    }
+
+    button:active {
+      transform: scale(0.98);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .active-query {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 1.5rem;
+      margin-top: 1.25rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--surface-border);
+    }
+
+    .stat-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.875rem;
+    }
+
+    .stat-label {
+      color: var(--text-muted);
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.2rem 0.55rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge-graph {
+      background: rgba(52, 211, 153, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(52, 211, 153, 0.3);
+    }
+
+    .badge-fallback {
+      background: rgba(251, 191, 36, 0.15);
+      color: var(--warning);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+
+    .alert {
+      padding: 1rem 1.25rem;
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+      font-size: 0.925rem;
+      display: none;
+    }
+
+    .alert-warning {
+      background: rgba(251, 191, 36, 0.12);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      color: #fef08a;
+    }
+
+    .alert-danger {
+      background: rgba(248, 113, 113, 0.12);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      color: #fca5a5;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.5rem;
+      text-align: left;
+    }
+
+    th {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--surface-border);
+    }
+
+    td {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid rgba(31, 45, 74, 0.5);
+      font-size: 0.925rem;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .dist-val {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .node-val {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: var(--primary);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--text-muted);
+    }
+
+    footer {
+      margin-top: 2rem;
+      text-align: center;
+      font-size: 0.8rem;
+      color: #475569;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>vsearch Demo</h1>
+      <p class="lead">
+        vsearch is an in-memory vector database built from scratch with an HNSW index, C++/AVX2 distance acceleration, and hybrid filtered search. This interactive demo explores 20,000 synthetic 64-dimensional vectors clustered across consumer categories.
+      </p>
+      <div class="meta-note">
+        Note: The demonstration index contains 20,000 synthetic 64-d vectors with single-process ACID durability.
+      </div>
+      <div class="header-links">
+        <a href="/docs" target="_blank">&rarr; Interactive API Docs (/docs)</a>
+        <a href="https://github.com/Rajiv6165/vector-search-engine" target="_blank">&rarr; GitHub Repository</a>
+      </div>
+    </header>
+
+    <div id="alert-box" class="alert alert-warning">
+      <span id="alert-message"></span>
+    </div>
+
+    <div class="card">
+      <div class="controls-grid">
+        <div class="form-group">
+          <label for="category-select">Filter by Category</label>
+          <select id="category-select">
+            <option value="">All Categories (No filter)</option>
+            <option value="electronics">Electronics</option>
+            <option value="clothing">Clothing</option>
+            <option value="home">Home</option>
+            <option value="books">Books</option>
+            <option value="sports">Sports</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="k-input">Neighbors (k)</label>
+          <input id="k-input" type="number" min="1" max="100" value="10" style="width: 80px;" />
+        </div>
+
+        <button id="btn-random" onclick="pickRandomAndSearch()">
+          Pick random item
+        </button>
+      </div>
+
+      <div id="query-summary" class="active-query" style="display: none;">
+        <div class="stat-pill">
+          <span class="stat-label">Query Node:</span>
+          <strong id="stat-query-node" class="node-val">#0</strong>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-label">Category:</span>
+          <span id="stat-query-cat" style="color: var(--text-main); font-weight: 500;">-</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-label">Latency:</span>
+          <span id="stat-latency" style="color: var(--success); font-weight: 600;">- ms</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-label">Search Path:</span>
+          <span id="stat-path" class="badge badge-graph">Graph</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <table id="results-table">
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Node ID</th>
+            <th>Category</th>
+            <th>Metadata Details</th>
+            <th>Distance</th>
+          </tr>
+        </thead>
+        <tbody id="results-body">
+          <tr>
+            <td colspan="5" class="empty-state">
+              Click <strong>&ldquo;Pick random item&rdquo;</strong> to sample a query vector and explore nearest neighbors.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <footer>
+      vsearch engine &bull; Single-process SIMD vector indexing &bull; Phase 12 Public Demo
+    </footer>
+  </div>
+
+  <script>
+    // Embedded public read key injected by FastAPI template
+    const PUBLIC_KEY = "{{ PUBLIC_KEY }}";
+
+    function getHeaders() {
+      const headers = { "Content-Type": "application/json" };
+      if (PUBLIC_KEY && PUBLIC_KEY.trim() !== "") {
+        headers["X-API-Key"] = PUBLIC_KEY;
+      }
+      return headers;
+    }
+
+    function showAlert(msg, isError = false) {
+      const box = document.getElementById("alert-box");
+      const msgEl = document.getElementById("alert-message");
+      box.className = "alert " + (isError ? "alert-danger" : "alert-warning");
+      msgEl.textContent = msg;
+      box.style.display = "block";
+    }
+
+    function hideAlert() {
+      document.getElementById("alert-box").style.display = "none";
+    }
+
+    async function pickRandomAndSearch() {
+      const btn = document.getElementById("btn-random");
+      const catSelect = document.getElementById("category-select");
+      const kInput = document.getElementById("k-input");
+      const category = catSelect.value;
+      const k = parseInt(kInput.value, 10) || 10;
+
+      btn.disabled = true;
+      btn.textContent = "Loading...";
+      hideAlert();
+
+      try {
+        // 1. Fetch a random item
+        let randomUrl = "/demo/random";
+        if (category) {
+          randomUrl += `?category=${encodeURIComponent(category)}`;
+        }
+
+        let resp;
+        try {
+          resp = await fetch(randomUrl, { headers: getHeaders() });
+        } catch (netErr) {
+          showAlert("⚠️ Unable to reach service. The server may be waking up from an idle spin-down (first request on Render free tier takes about a minute). Please wait a moment and try again.");
+          btn.disabled = false;
+          btn.textContent = "Pick random item";
+          return;
+        }
+
+        if (resp.status === 503) {
+          showAlert("⏳ Server is initializing demo vectors. Please wait 10-15 seconds and try again.");
+          btn.disabled = false;
+          btn.textContent = "Pick random item";
+          return;
+        }
+
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => ({ detail: resp.statusText }));
+          showAlert(`Error fetching random vector: ${errData.detail || resp.statusText}`, true);
+          btn.disabled = false;
+          btn.textContent = "Pick random item";
+          return;
+        }
+
+        const randomData = await resp.json();
+        const nodeId = randomData.node_id;
+        const queryMeta = randomData.metadata || {};
+
+        // 2. Fetch similar items
+        let similarUrl = `/similar/${nodeId}?k=${k}`;
+        if (category) {
+          similarUrl += `&category=${encodeURIComponent(category)}`;
+        }
+
+        const simResp = await fetch(similarUrl, { headers: getHeaders() });
+        if (!simResp.ok) {
+          const errData = await simResp.json().catch(() => ({ detail: simResp.statusText }));
+          showAlert(`Error searching similar items: ${errData.detail || simResp.statusText}`, true);
+          btn.disabled = false;
+          btn.textContent = "Pick random item";
+          return;
+        }
+
+        const simData = await simResp.json();
+        renderResults(nodeId, queryMeta, simData);
+      } catch (err) {
+        showAlert(`Unexpected error: ${err.message}`, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Pick random item";
+      }
+    }
+
+    function renderResults(nodeId, queryMeta, simData) {
+      document.getElementById("query-summary").style.display = "flex";
+      document.getElementById("stat-query-node").textContent = `#${nodeId}`;
+      document.getElementById("stat-query-cat").textContent = queryMeta.category || "None";
+      document.getElementById("stat-latency").textContent = `${simData.latency_ms.toFixed(3)} ms`;
+
+      const pathBadge = document.getElementById("stat-path");
+      const isFallback = simData.used_exact_fallback || simData.search_path === "exact_fallback";
+      pathBadge.className = isFallback ? "badge badge-fallback" : "badge badge-graph";
+      pathBadge.textContent = isFallback ? "Exact Fallback" : "Graph Search";
+
+      const tbody = document.getElementById("results-body");
+      while (tbody.firstChild) {
+        tbody.removeChild(tbody.firstChild);
+      }
+
+      if (!simData.results || simData.results.length === 0) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 5;
+        td.className = "empty-state";
+        td.textContent = "No similar vectors found.";
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+
+      simData.results.forEach((item, idx) => {
+        const meta = item.metadata || {};
+        const cat = meta.category || "n/a";
+        const metaEntries = Object.entries(meta)
+          .filter(([k]) => k !== "category")
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(", ") || "-";
+
+        const tr = document.createElement("tr");
+
+        const tdRank = document.createElement("td");
+        const strongRank = document.createElement("strong");
+        strongRank.textContent = `#${idx + 1}`;
+        tdRank.appendChild(strongRank);
+        tr.appendChild(tdRank);
+
+        const tdNode = document.createElement("td");
+        tdNode.className = "node-val";
+        tdNode.textContent = item.node_id;
+        tr.appendChild(tdNode);
+
+        const tdCat = document.createElement("td");
+        const badgeCat = document.createElement("span");
+        badgeCat.className = "badge";
+        badgeCat.style.background = "rgba(255,255,255,0.06)";
+        badgeCat.style.color = "var(--text-main)";
+        badgeCat.textContent = cat;
+        tdCat.appendChild(badgeCat);
+        tr.appendChild(tdCat);
+
+        const tdMeta = document.createElement("td");
+        tdMeta.style.color = "var(--text-muted)";
+        tdMeta.style.fontSize = "0.85rem";
+        tdMeta.textContent = metaEntries;
+        tr.appendChild(tdMeta);
+
+        const tdDist = document.createElement("td");
+        tdDist.className = "dist-val";
+        tdDist.textContent = typeof item.distance === "number" ? item.distance.toFixed(4) : item.distance;
+        tr.appendChild(tdDist);
+
+        tbody.appendChild(tr);
+      });
+    }
+  </script>
+</body>
+</html>

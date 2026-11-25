@@ -598,6 +598,7 @@ class HNSWIndex:
         self.filter_fallback_threshold: int = 2000
         self._filter_cache = FilterCache(max_entries=1000, max_bytes=256 * 1024 * 1024)
         self.escalation_count: int = 0
+        self.last_search_path: str = "graph"
 
     def seed_level_generator(self, seed: int):
         """Seed the level generator RNG for deterministic index construction."""
@@ -1236,6 +1237,7 @@ class HNSWIndex:
             
             # Selectivity-aware fallback:
             if num_matching <= self.filter_fallback_threshold:
+                self.last_search_path = "exact_fallback"
                 return self._search_brute_force_matching(
                     query_c, allowed_set, k,
                     return_visited=return_visited,
@@ -1319,6 +1321,7 @@ class HNSWIndex:
 
         if should_escalate:
             self.escalation_count += 1
+            self.last_search_path = "exact_fallback"
             results = self._search_brute_force_matching(
                 query_c,
                 allowed_set,
@@ -1329,6 +1332,7 @@ class HNSWIndex:
                 cached_vectors=cached_vectors
             )
         else:
+            self.last_search_path = "graph"
             W.sort(key=lambda x: x[1])
             results = []
             for n_id, dist in W:
@@ -1342,6 +1346,7 @@ class HNSWIndex:
 
             if filter_dict and len(results) < target_k:
                 self.escalation_count += 1
+                self.last_search_path = "exact_fallback"
                 results = self._search_brute_force_matching(
                     query_c,
                     allowed_set,

@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import random
 import shutil
 import asyncio
 import secrets
@@ -11,10 +12,10 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List
 
-from fastapi import FastAPI, HTTPException, Security, Depends, Request
+from fastapi import FastAPI, HTTPException, Security, Depends, Request, Query
 from fastapi.security import APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, HTMLResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("vsearch.api")
@@ -26,7 +27,8 @@ from vsearch.api.models import (
     BatchInsertRequest, BatchInsertResponse,
     SearchRequest, SearchResponse,
     BatchSearchRequest, BatchSearchResponse,
-    SearchResult, StatsResponse, HealthResponse
+    SearchResult, StatsResponse, HealthResponse,
+    SimilarResponse, RandomNodeResponse
 )
 
 # ---------------------------------------------------------------------------
@@ -135,6 +137,7 @@ BAKED_SNAPSHOT_DIR = os.getenv("VSEARCH_BAKED_SNAPSHOT_DIR", "/app/demo_snapshot
 
 VSEARCH_API_KEY = os.getenv("VSEARCH_API_KEY")
 VSEARCH_READ_KEY = os.getenv("VSEARCH_READ_KEY")
+VSEARCH_PUBLIC_KEY = os.getenv("VSEARCH_PUBLIC_KEY")
 VSEARCH_ALLOW_INSECURE = os.getenv("VSEARCH_ALLOW_INSECURE", "0") in ("1", "true", "True")
 
 MAX_VECTORS_ENV = os.getenv("VSEARCH_MAX_VECTORS")
@@ -194,6 +197,33 @@ def verify_read_key(api_key: Optional[str] = Security(api_key_header)):
     if not valid:
         raise HTTPException(status_code=401, detail="Invalid or missing read API Key")
     return api_key
+
+def verify_demo_key(api_key: Optional[str] = Security(api_key_header)):
+    """Verifies access to public demo read routes (allows VSEARCH_PUBLIC_KEY, read key, or write key)."""
+    if not VSEARCH_API_KEY and not VSEARCH_READ_KEY and not VSEARCH_PUBLIC_KEY and VSEARCH_ALLOW_INSECURE:
+        return api_key
+
+    valid = False
+    if api_key:
+        if VSEARCH_API_KEY and secrets.compare_digest(api_key, VSEARCH_API_KEY):
+            valid = True
+        if VSEARCH_READ_KEY and secrets.compare_digest(api_key, VSEARCH_READ_KEY):
+            valid = True
+        if VSEARCH_PUBLIC_KEY and secrets.compare_digest(api_key, VSEARCH_PUBLIC_KEY):
+            valid = True
+
+    if not valid:
+        raise HTTPException(status_code=401, detail="Invalid or missing API Key for demo routes")
+    return api_key
+
+TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "templates", "index.html")
+
+def render_demo_html(public_key: str = "") -> str:
+    if os.path.exists(TEMPLATE_PATH):
+        with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
+            content = f.read()
+            return content.replace("{{ PUBLIC_KEY }}", public_key or "")
+    return "<html><body><h1>vsearch demo</h1><p>Demo template not found.</p></body></html>"
 
 # Global index instance
 index: Optional[HNSWIndex] = None
@@ -550,3 +580,102 @@ def get_stats(api_key: str = Depends(verify_read_key)):
         ready=is_ready,
         progress=seeding_progress
     )
+
+# ---------------------------------------------------------------------------
+# Phase 12: Public Demo Endpoints
+# ---------------------------------------------------------------------------
+@app.get("/", response_class=HTMLResponse)
+def get_demo_page():
+    """Serves the interactive single-page public demo."""
+    key = VSEARCH_PUBLIC_KEY or ""
+    return HTMLResponse(content=render_demo_html(public_key=key))
+
+@app.get("/similar/{node_id}", response_model=SimilarResponse)
+def get_similar_vectors(
+    node_id: int,
+    k: int = Query(10, ge=1, description="Number of nearest neighbors to return"),
+    category: Optional[str] = Query(None, description="Optional category filter"),
+    request: Request = None,
+    api_key: str = Depends(verify_demo_key)
+):
+    if index is None:
+        raise HTTPException(status_code=500, detail="Index not initialized")
+
+    # Rate limiting
+    if request is not None:
+        client_ip = get_client_ip(request)
+        if not rate_limiter.check_rate_limit(client_ip):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Too many search requests from this IP.")
+
+    # Readiness check
+    if not is_ready:
+        if not ready_event.wait(timeout=0.05):
+            pct = round((seeding_progress or 0.0) * 100)
+            raise HTTPException(status_code=503, detail=f"Index is initializing demo dataset ({pct}% complete). Please retry shortly.")
+
+    if MAX_K is not None and k > MAX_K:
+        raise HTTPException(status_code=400, detail=f"Requested k={k} exceeds maximum allowed (MAX_K={MAX_K})")
+
+    # Check node existence
+    if node_id not in index.nodes or node_id in index.deleted_nodes:
+        raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
+
+    vec = index.nodes[node_id]
+    filter_dict = {"category": category} if category else None
+
+    start_time = time.perf_counter()
+    results = index.search(vec, k=k, filter_dict=filter_dict)
+    latency_ms = (time.perf_counter() - start_time) * 1000.0
+
+    search_path = getattr(index, "last_search_path", "graph")
+    used_exact_fallback = (search_path == "exact_fallback")
+
+    formatted = [SearchResult(node_id=n, distance=d, metadata=m) for n, d, m in results]
+    return SimilarResponse(
+        node_id=node_id,
+        k=k,
+        category=category,
+        results=formatted,
+        latency_ms=round(latency_ms, 3),
+        search_path=search_path,
+        used_exact_fallback=used_exact_fallback
+    )
+
+@app.get("/demo/random", response_model=RandomNodeResponse)
+def get_random_node(
+    category: Optional[str] = Query(None, description="Optional category filter"),
+    request: Request = None,
+    api_key: str = Depends(verify_demo_key)
+):
+    if index is None:
+        raise HTTPException(status_code=500, detail="Index not initialized")
+
+    # Rate limiting
+    if request is not None:
+        client_ip = get_client_ip(request)
+        if not rate_limiter.check_rate_limit(client_ip):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Too many search requests from this IP.")
+
+    # Readiness check
+    if not is_ready:
+        if not ready_event.wait(timeout=0.05):
+            pct = round((seeding_progress or 0.0) * 100)
+            raise HTTPException(status_code=503, detail=f"Index is initializing demo dataset ({pct}% complete). Please retry shortly.")
+
+    if category:
+        matching = index.metadata_index.get_matching_ids({"category": category})
+        if matching is None:
+            candidates = [n for n, m in index.metadata_store.items() if m.get("category") == category and n not in index.deleted_nodes and n in index.nodes]
+        else:
+            candidates = [n for n in matching if n not in index.deleted_nodes and n in index.nodes]
+        if not candidates:
+            raise HTTPException(status_code=404, detail=f"No vectors found in category '{category}'")
+    else:
+        candidates = [n for n in index.nodes.node_id_to_index.keys() if n not in index.deleted_nodes]
+        if not candidates:
+            raise HTTPException(status_code=404, detail="Index contains no active vectors")
+
+    chosen_id = random.choice(candidates)
+    meta = index.metadata_store.get(chosen_id, {})
+    return RandomNodeResponse(node_id=chosen_id, metadata=meta)
+

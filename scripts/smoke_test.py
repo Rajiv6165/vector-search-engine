@@ -34,10 +34,13 @@ def make_request(
         
     req = urllib.request.Request(url, data=data_bytes, headers=req_headers, method=method)
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:
             code = resp.status
             body = resp.read().decode("utf-8")
-            return code, json.loads(body) if body else {}
+            try:
+                return code, json.loads(body) if body else {}
+            except Exception:
+                return code, {"raw": body}
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8")
         try:
@@ -46,18 +49,19 @@ def make_request(
             parsed = {"raw": body}
         return e.code, parsed
 
-def run_smoke_test(base_url: str, write_key: Optional[str] = None, read_key: Optional[str] = None) -> bool:
+def run_smoke_test(base_url: str, write_key: Optional[str] = None, read_key: Optional[str] = None, public_key: Optional[str] = None) -> bool:
     base = base_url.rstrip("/")
     print("=" * 70)
     print(f"RUNNING VSEARCH SMOKE TEST ON: {base}")
-    print(f"Write Key: {'***' + write_key[-4:] if write_key and len(write_key) > 4 else ('Present' if write_key else 'None')}")
-    print(f"Read Key:  {'***' + read_key[-4:] if read_key and len(read_key) > 4 else ('Present' if read_key else 'None')}")
+    print(f"Write Key:  {'***' + write_key[-4:] if write_key and len(write_key) > 4 else ('Present' if write_key else 'None')}")
+    print(f"Read Key:   {'***' + read_key[-4:] if read_key and len(read_key) > 4 else ('Present' if read_key else 'None')}")
+    print(f"Public Key: {'***' + public_key[-4:] if public_key and len(public_key) > 4 else ('Present' if public_key else 'None')}")
     print("=" * 70)
 
     all_passed = True
 
     # 1. GET /health (Unauthenticated)
-    print("\n[1/5] Checking GET /health (Unauthenticated)...")
+    print("\n[1/7] Checking GET /health (Unauthenticated)...")
     code, data = make_request(f"{base}/health")
     if code == 200 and data.get("status") == "ok":
         print(f"  [PASS] /health returned HTTP 200, status='ok'")
@@ -65,8 +69,17 @@ def run_smoke_test(base_url: str, write_key: Optional[str] = None, read_key: Opt
         print(f"  [FAIL] /health failed: HTTP {code}, body: {data}")
         all_passed = False
 
-    # 2. GET /stats (Read Key)
-    print("\n[2/5] Checking GET /stats (Read Key)...")
+    # 2. GET / (Interactive Demo Page)
+    print("\n[2/7] Checking GET / (Interactive Demo Page)...")
+    code, html_data = make_request(f"{base}/")
+    if code == 200 and ("vsearch Demo" in html_data.get("raw", "") or "vsearch" in html_data.get("raw", "")):
+        print(f"  [PASS] GET / returned HTTP 200 with interactive demo page HTML")
+    else:
+        print(f"  [FAIL] GET / failed: HTTP {code}, body: {html_data}")
+        all_passed = False
+
+    # 3. GET /stats (Read Key)
+    print("\n[3/7] Checking GET /stats (Read Key)...")
     read_headers = {"X-API-Key": read_key} if read_key else {}
     code, stats = make_request(f"{base}/stats", headers=read_headers)
     dim = 64
@@ -94,8 +107,8 @@ def run_smoke_test(base_url: str, write_key: Optional[str] = None, read_key: Opt
         print(f"  [FAIL] /stats failed: HTTP {code}, body: {stats}")
         all_passed = False
 
-    # 3. Unfiltered Search (k results)
-    print("\n[3/5] Checking POST /search (Unfiltered, k=5)...")
+    # 4. Unfiltered Search (k results)
+    print("\n[4/7] Checking POST /search (Unfiltered, k=5)...")
     dummy_query = [0.1] * dim
     code, res = make_request(
         f"{base}/search",
@@ -113,8 +126,8 @@ def run_smoke_test(base_url: str, write_key: Optional[str] = None, read_key: Opt
         print(f"  [FAIL] Unfiltered search failed: HTTP {code}, body: {res}")
         all_passed = False
 
-    # 4. Filtered Search (Only requested category)
-    print("\n[4/5] Checking POST /search (Filtered: category='electronics')...")
+    # 5. Filtered Search (Only requested category)
+    print("\n[5/7] Checking POST /search (Filtered: category='electronics')...")
     code, res = make_request(
         f"{base}/search",
         method="POST",
@@ -140,8 +153,44 @@ def run_smoke_test(base_url: str, write_key: Optional[str] = None, read_key: Opt
         print(f"  [FAIL] Filtered search failed: HTTP {code}, body: {res}")
         all_passed = False
 
-    # 5. Auth Permission Checks
-    print("\n[5/5] Checking Security & Auth Restrictions...")
+    # 6. Phase 12 Demo Routes (/demo/random and /similar/{node_id})
+    print("\n[6/7] Checking GET /demo/random & GET /similar/{node_id}...")
+    code, rand_node = make_request(f"{base}/demo/random?category=electronics", headers=read_headers)
+    if code == 200 and "node_id" in rand_node:
+        sample_node_id = rand_node["node_id"]
+        print(f"  [PASS] /demo/random returned sample node_id={sample_node_id}, category='{rand_node.get('metadata', {}).get('category')}'")
+
+        # Test /similar/{node_id}
+        code, sim_res = make_request(f"{base}/similar/{sample_node_id}?k=5&category=electronics", headers=read_headers)
+        if code == 200:
+            sim_items = sim_res.get("results", [])
+            lat = sim_res.get("latency_ms", 0)
+            path = sim_res.get("search_path", "unknown")
+            print(f"  [PASS] /similar/{sample_node_id} returned {len(sim_items)} items (latency: {lat:.3f} ms, search_path: {path})")
+            if len(sim_items) > 0 and all(item.get("metadata", {}).get("category") == "electronics" for item in sim_items):
+                print(f"  [PASS] All /similar items match requested category 'electronics'")
+            else:
+                print(f"  [FAIL] /similar items failed category constraint: {sim_items}")
+                all_passed = False
+        else:
+            print(f"  [FAIL] /similar/{sample_node_id} failed: HTTP {code}, body: {sim_res}")
+            all_passed = False
+
+        # If dedicated public_key provided, also verify demo routes work with public_key
+        if public_key:
+            pub_headers = {"X-API-Key": public_key}
+            code_pub, _ = make_request(f"{base}/similar/{sample_node_id}?k=2", headers=pub_headers)
+            if code_pub == 200:
+                print(f"  [PASS] Public demo key successfully authorized on GET /similar/{sample_node_id}")
+            else:
+                print(f"  [FAIL] Public demo key rejected on GET /similar: HTTP {code_pub}")
+                all_passed = False
+    else:
+        print(f"  [FAIL] /demo/random failed: HTTP {code}, body: {rand_node}")
+        all_passed = False
+
+    # 7. Auth Permission Checks
+    print("\n[7/7] Checking Security & Auth Restrictions...")
     if read_key:
         # Read key should be REJECTED on writes
         code, err = make_request(
@@ -168,6 +217,34 @@ def run_smoke_test(base_url: str, write_key: Optional[str] = None, read_key: Opt
             all_passed = False
     else:
         print("  [SKIP] No VSEARCH_READ_KEY configured to test read restriction.")
+
+    # Public key restriction validation (if provided)
+    if public_key:
+        print("\nChecking Public Key Restrictions (rejected on /search, /stats, and write routes)...")
+        pub_headers = {"X-API-Key": public_key}
+        # 1. /search rejected
+        c, _ = make_request(f"{base}/search", method="POST", headers=pub_headers, payload={"vector": dummy_query, "k": 1})
+        if c == 401:
+            print(f"  [PASS] Public key rejected on POST /search with HTTP 401")
+        else:
+            print(f"  [FAIL] Public key NOT rejected on POST /search: HTTP {c}")
+            all_passed = False
+
+        # 2. /stats rejected
+        c, _ = make_request(f"{base}/stats", headers=pub_headers)
+        if c == 401:
+            print(f"  [PASS] Public key rejected on GET /stats with HTTP 401")
+        else:
+            print(f"  [FAIL] Public key NOT rejected on GET /stats: HTTP {c}")
+            all_passed = False
+
+        # 3. POST /vectors rejected
+        c, _ = make_request(f"{base}/vectors", method="POST", headers=pub_headers, payload={"node_id": 9999999, "vector": dummy_query})
+        if c in (401, 403):
+            print(f"  [PASS] Public key rejected on POST /vectors with HTTP {c}")
+        else:
+            print(f"  [FAIL] Public key NOT rejected on POST /vectors: HTTP {c}")
+            all_passed = False
 
     # Write key validation (if provided)
     if write_key:
@@ -210,7 +287,8 @@ if __name__ == "__main__":
     parser.add_argument("--url", type=str, default="http://localhost:8000", help="Base URL of service")
     parser.add_argument("--write-key", type=str, default=os.getenv("VSEARCH_API_KEY"), help="Write API key")
     parser.add_argument("--read-key", type=str, default=os.getenv("VSEARCH_READ_KEY"), help="Read API key")
+    parser.add_argument("--public-key", type=str, default=os.getenv("VSEARCH_PUBLIC_KEY"), help="Public Demo API key")
     args = parser.parse_args()
 
-    success = run_smoke_test(args.url, write_key=args.write_key, read_key=args.read_key)
+    success = run_smoke_test(args.url, write_key=args.write_key, read_key=args.read_key, public_key=args.public_key)
     sys.exit(0 if success else 1)

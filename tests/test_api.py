@@ -143,9 +143,11 @@ def test_api_auth():
     temp_dir = tempfile.mkdtemp()
     api_app.PERSIST_DIR = temp_dir
     api_app.VSEARCH_API_KEY = "secret-write-key"
-    api_app.VSEARCH_READ_KEY = "public-read-key"
+    api_app.VSEARCH_READ_KEY = "private-read-key"
+    api_app.VSEARCH_PUBLIC_KEY = "public-demo-key"
     os.environ["VSEARCH_API_KEY"] = "secret-write-key"
-    os.environ["VSEARCH_READ_KEY"] = "public-read-key"
+    os.environ["VSEARCH_READ_KEY"] = "private-read-key"
+    os.environ["VSEARCH_PUBLIC_KEY"] = "public-demo-key"
     os.environ.pop("VSEARCH_ALLOW_INSECURE", None)
     
     app = api_app.app
@@ -154,54 +156,76 @@ def test_api_auth():
             # 1. Health is always public
             assert client.get("/health").status_code == 200
             
-            # 2. Stats requires read or write key
+            # 2. Stats requires read or write key; rejects public demo key
             assert client.get("/stats").status_code == 401
             assert client.get("/stats", headers={"X-API-Key": "wrong"}).status_code == 401
-            assert client.get("/stats", headers={"X-API-Key": "public-read-key"}).status_code == 200
+            assert client.get("/stats", headers={"X-API-Key": "public-demo-key"}).status_code == 401
+            assert client.get("/stats", headers={"X-API-Key": "private-read-key"}).status_code == 200
             assert client.get("/stats", headers={"X-API-Key": "secret-write-key"}).status_code == 200
             
-            # 3. Write endpoints strictly reject read key
-            resp = client.post(
-                "/vectors",
-                json={"node_id": 1, "vector": [1.0, 2.0, 3.0, 4.0]},
-                headers={"X-API-Key": "public-read-key"}
-            )
-            assert resp.status_code == 401
-            assert "write API Key" in resp.json()["detail"]
+            # 3. Write endpoints strictly reject read key and public key
+            for key in ["private-read-key", "public-demo-key"]:
+                resp = client.post(
+                    "/vectors",
+                    json={"node_id": 1, "vector": [1.0, 2.0, 3.0, 4.0]},
+                    headers={"X-API-Key": key}
+                )
+                assert resp.status_code == 401
+                assert "write API Key" in resp.json()["detail"]
 
-            resp = client.post(
-                "/vectors/batch",
-                json={"vectors": [[1.0, 2.0, 3.0, 4.0]], "node_ids": [1]},
-                headers={"X-API-Key": "public-read-key"}
-            )
-            assert resp.status_code == 401
+                resp = client.post(
+                    "/vectors/batch",
+                    json={"vectors": [[1.0, 2.0, 3.0, 4.0]], "node_ids": [1]},
+                    headers={"X-API-Key": key}
+                )
+                assert resp.status_code == 401
 
-            resp = client.delete("/vectors/1", headers={"X-API-Key": "public-read-key"})
-            assert resp.status_code == 401
+                resp = client.delete("/vectors/1", headers={"X-API-Key": key})
+                assert resp.status_code == 401
 
             # 4. Write key succeeds on write endpoints
             resp = client.post(
                 "/vectors",
-                json={"node_id": 1, "vector": [1.0, 2.0, 3.0, 4.0]},
+                json={"node_id": 1, "vector": [1.0, 2.0, 3.0, 4.0], "metadata": {"category": "electronics"}},
                 headers={"X-API-Key": "secret-write-key"}
             )
             assert resp.status_code == 200
             
-            # 5. Search accepts read key
+            # 5. Search accepts read key, but strictly rejects public demo key
+            assert client.post(
+                "/search",
+                json={"vector": [1.0, 2.0, 3.0, 4.0], "k": 1},
+                headers={"X-API-Key": "public-demo-key"}
+            ).status_code == 401
+
+            assert client.post(
+                "/search/batch",
+                json={"vectors": [[1.0, 2.0, 3.0, 4.0]], "k": 1},
+                headers={"X-API-Key": "public-demo-key"}
+            ).status_code == 401
+
             resp = client.post(
                 "/search",
                 json={"vector": [1.0, 2.0, 3.0, 4.0], "k": 1},
-                headers={"X-API-Key": "public-read-key"}
+                headers={"X-API-Key": "private-read-key"}
             )
             assert resp.status_code == 200
             assert len(resp.json()["results"]) == 1
 
-            # 6. Delete with write key
+            # 6. Demo routes accept public demo key
+            resp = client.get("/similar/1", headers={"X-API-Key": "public-demo-key"})
+            assert resp.status_code == 200
+
+            resp = client.get("/demo/random", headers={"X-API-Key": "public-demo-key"})
+            assert resp.status_code == 200
+
+            # 7. Delete with write key
             resp = client.delete("/vectors/1", headers={"X-API-Key": "secret-write-key"})
             assert resp.status_code == 200
     finally:
         api_app.VSEARCH_API_KEY = None
         api_app.VSEARCH_READ_KEY = None
+        api_app.VSEARCH_PUBLIC_KEY = None
         os.environ["VSEARCH_ALLOW_INSECURE"] = "1"
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -381,3 +405,106 @@ def test_seed_demo():
     results = index.search(query, k=5, filter_dict={"category": "electronics"})
     assert len(results) > 0
     assert all(m["category"] == "electronics" for _, _, m in results)
+
+def test_demo_endpoints():
+    """Verify Phase 12 endpoints: GET /, GET /similar/{node_id}, GET /demo/random, auth, k cap, unknown id."""
+    from vsearch.hnsw import HNSWIndex, HNSWConfig
+    from fastapi import HTTPException
+    import numpy as np
+
+    temp_dir = tempfile.mkdtemp()
+    try:
+        api_app.PERSIST_DIR = temp_dir
+        config = HNSWConfig(M=16, ef_construction=100, ef_search=50)
+        test_index = HNSWIndex(config=config, persist_dir=temp_dir)
+
+        # Insert 10 vectors across 2 categories
+        rng = np.random.default_rng(42)
+        for i in range(1, 11):
+            cat = "electronics" if i <= 5 else "clothing"
+            vec = rng.normal(size=16).astype(np.float32)
+            test_index.insert(i, vec, metadata={"category": cat, "item_id": i})
+
+        api_app.index = test_index
+        api_app.is_ready = True
+        api_app.MAX_K = 10
+        api_app.VSEARCH_API_KEY = "write-key-123"
+        api_app.VSEARCH_READ_KEY = "read-key-123"
+        api_app.VSEARCH_PUBLIC_KEY = "public-key-123"
+        api_app.VSEARCH_ALLOW_INSECURE = False
+
+        # 1. GET / (HTML response)
+        html_resp = api_app.get_demo_page()
+        assert html_resp.status_code == 200
+        html_content = html_resp.body.decode("utf-8")
+        assert "vsearch Demo" in html_content
+        assert "Pick random item" in html_content
+        assert "/docs" in html_content
+        assert "20,000 synthetic 64-d vectors" in html_content
+        assert "public-key-123" in html_content
+
+        # 2. Auth: verify_demo_key vs verify_write_key
+        assert api_app.verify_demo_key("public-key-123") == "public-key-123"
+        assert api_app.verify_demo_key("read-key-123") == "read-key-123"
+        assert api_app.verify_demo_key("write-key-123") == "write-key-123"
+        with pytest.raises(HTTPException) as exc:
+            api_app.verify_demo_key("wrong-key")
+        assert exc.value.status_code == 401
+
+        # Public key must NOT have read key access to /search, /search/batch, /stats
+        with pytest.raises(HTTPException) as exc:
+            api_app.verify_read_key("public-key-123")
+        assert exc.value.status_code == 401
+
+        # Public key must NOT have write access
+        with pytest.raises(HTTPException) as exc:
+            api_app.verify_write_key("public-key-123")
+        assert exc.value.status_code == 401
+
+        # 3. GET /similar/{node_id} success
+        sim_res = api_app.get_similar_vectors(node_id=1, k=5, category=None, request=None, api_key="public-key-123")
+        assert sim_res.node_id == 1
+        assert len(sim_res.results) == 5
+        assert sim_res.latency_ms >= 0.0
+        assert sim_res.search_path in ("graph", "exact_fallback")
+        assert isinstance(sim_res.used_exact_fallback, bool)
+
+        # 4. GET /similar/{node_id} with category filter
+        sim_cat = api_app.get_similar_vectors(node_id=1, k=3, category="electronics", request=None, api_key="public-key-123")
+        assert len(sim_cat.results) == 3
+        assert all(r.metadata["category"] == "electronics" for r in sim_cat.results)
+
+        # 5. GET /similar/{node_id} with unknown id -> 404
+        with pytest.raises(HTTPException) as exc:
+            api_app.get_similar_vectors(node_id=999999, k=5, category=None, request=None, api_key="public-key-123")
+        assert exc.value.status_code == 404
+        assert "Node 999999 not found" in exc.value.detail
+
+        # 6. GET /similar/{node_id} k cap exceeded -> 400
+        with pytest.raises(HTTPException) as exc:
+            api_app.get_similar_vectors(node_id=1, k=15, category=None, request=None, api_key="public-key-123")
+        assert exc.value.status_code == 400
+        assert "exceeds maximum allowed" in exc.value.detail
+
+        # 7. GET /demo/random
+        rand_node = api_app.get_random_node(category=None, request=None, api_key="public-key-123")
+        assert 1 <= rand_node.node_id <= 10
+        assert "category" in rand_node.metadata
+
+        # GET /demo/random with category filter
+        rand_elec = api_app.get_random_node(category="electronics", request=None, api_key="public-key-123")
+        assert rand_elec.node_id in (1, 2, 3, 4, 5)
+        assert rand_elec.metadata["category"] == "electronics"
+
+        # GET /demo/random with non-existent category -> 404
+        with pytest.raises(HTTPException) as exc:
+            api_app.get_random_node(category="nonexistent_cat", request=None, api_key="public-key-123")
+        assert exc.value.status_code == 404
+    finally:
+        api_app.index = None
+        api_app.VSEARCH_API_KEY = None
+        api_app.VSEARCH_READ_KEY = None
+        api_app.VSEARCH_PUBLIC_KEY = None
+        api_app.VSEARCH_ALLOW_INSECURE = True
+        shutil.rmtree(temp_dir, ignore_errors=True)
+

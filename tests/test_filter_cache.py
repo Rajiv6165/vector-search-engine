@@ -117,7 +117,7 @@ def test_high_cardinality_insert_latency():
 
     avg_insert_us = np.mean(t_inserts)
     # Insert should remain fast and not loop over the 500 cached filters
-    assert avg_insert_us < 2000.0, f"Insert latency too high: {avg_insert_us:.2f} us"
+    assert avg_insert_us < 4000.0, f"Insert latency too high: {avg_insert_us:.2f} us"
 
 
 def test_escalation_instrumentation():

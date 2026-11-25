@@ -87,3 +87,17 @@ class StatsResponse(BaseModel):
     version: str
     ready: bool = True
     progress: Optional[float] = None
+
+class SimilarResponse(BaseModel):
+    node_id: int
+    k: int
+    category: Optional[str] = None
+    results: List[SearchResult]
+    latency_ms: float
+    search_path: str
+    used_exact_fallback: bool
+
+class RandomNodeResponse(BaseModel):
+    node_id: int
+    metadata: Dict[str, Any]
+

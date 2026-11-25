@@ -29,3 +29,5 @@ services:
         sync: false
       - key: VSEARCH_READ_KEY
         sync: false
+      - key: VSEARCH_PUBLIC_KEY
+        sync: false

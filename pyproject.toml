@@ -9,3 +9,7 @@ description = "Vector search engine"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"vsearch.api" = ["templates/*.html"]
+

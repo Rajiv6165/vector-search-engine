@@ -13,7 +13,8 @@ All runtime behavior is governed via environment variables.
 | `PORT` | `8000` | Positive integer | The port on which Uvicorn binds and listens. |
 | `VSEARCH_DATA_DIR` | `./vsearch_data` | Valid filesystem path | Directory storing Write-Ahead Log (WAL), snapshot checkpoints, and memory-mapped vector files. (Aliases `VSEARCH_PERSIST_DIR` for backward compatibility). |
 | `VSEARCH_API_KEY` | `None` (fails closed) | String | **Write API Key**. Required for state-modifying operations (`POST /vectors`, `POST /vectors/batch`, `DELETE /vectors/{id}`). Also permits read queries. Refuses to start if unset unless `VSEARCH_ALLOW_INSECURE=1`. |
-| `VSEARCH_READ_KEY` | `None` (unauthenticated) | String | **Read API Key**. Permits read-only operations (`POST /search`, `POST /search/batch`, `GET /stats`). Strictly rejected on write endpoints with HTTP 401. |
+| `VSEARCH_READ_KEY` | `None` (unauthenticated) | String | **Read API Key**. Permits read-only operations (`POST /search`, `POST /search/batch`, `GET /stats`, `GET /similar/{id}`, `GET /demo/random`). Strictly rejected on write endpoints with HTTP 401. |
+| `VSEARCH_PUBLIC_KEY` | `None` (empty) | String | **Public Demo Key**. Injected into the `GET /` frontend demo to authenticate `/similar/{id}` and `/demo/random` requests. Visible to visitors inspecting browser network traffic; strictly denied write access and rejected on `/search`, `/search/batch`, and `/stats` with HTTP 401. |
 | `VSEARCH_ALLOW_INSECURE` | `0` | `0`, `1` | If `1`, permits unauthenticated local development without setting `VSEARCH_API_KEY`. Defaults to `0` (fails closed). |
 | `VSEARCH_MAX_VECTORS` | `None` (unlimited) | Positive integer | Hard limit on indexed vectors. When reached, further inserts return HTTP 400. |
 | `VSEARCH_MAX_K` | `1000` | Positive integer | Maximum nearest neighbors ($k$) allowed per search request. Requests exceeding this return HTTP 400. |
@@ -70,13 +71,20 @@ Peak resident memory (RSS) was measured during snapshot serialization at $N=20,0
 
 | Endpoint | Method | Required Permission | Accepted Key |
 | :--- | :--- | :--- | :--- |
+| `/` | `GET` | **Public** | None required (serves interactive demo HTML) |
 | `/health` | `GET` | **Public** | None required (always open) |
 | `/stats` | `GET` | **Read** | `VSEARCH_READ_KEY` or `VSEARCH_API_KEY` |
 | `/search` | `POST` | **Read** | `VSEARCH_READ_KEY` or `VSEARCH_API_KEY` |
 | `/search/batch` | `POST` | **Read** | `VSEARCH_READ_KEY` or `VSEARCH_API_KEY` |
+| `/similar/{id}` | `GET` | **Demo Read** | `VSEARCH_PUBLIC_KEY`, `VSEARCH_READ_KEY`, or `VSEARCH_API_KEY` |
+| `/demo/random` | `GET` | **Demo Read** | `VSEARCH_PUBLIC_KEY`, `VSEARCH_READ_KEY`, or `VSEARCH_API_KEY` |
 | `/vectors` | `POST` | **Write** | `VSEARCH_API_KEY` only |
 | `/vectors/batch` | `POST` | **Write** | `VSEARCH_API_KEY` only |
 | `/vectors/{id}` | `DELETE` | **Write** | `VSEARCH_API_KEY` only |
+
+> [!NOTE]
+> **Public Demo Key Isolation & Visibility**:
+> The `GET /` interactive demo page connects from the visitor's browser and executes read requests to `GET /similar/{node_id}` and `GET /demo/random`. The public key (`VSEARCH_PUBLIC_KEY`) is injected into the HTML and is visible to visitors inspecting network requests. This key is strictly confined to the `/similar` and `/demo/random` demo endpoints: it is rejected with HTTP 401 on `/search`, `/search/batch`, `/stats`, and all write routes (`POST/DELETE /vectors`). All demo requests remain guarded by the per-IP sliding-window rate limiter (`VSEARCH_RATE_LIMIT_RPS`).
 
 ---
 
