@@ -24,6 +24,9 @@ All runtime behavior is governed via environment variables.
 | `VSEARCH_RATE_LIMIT_RPS` | `100` | Positive integer | Sliding-window per-IP rate limit on `/search` and `/search/batch`. Returns HTTP 429 Too Many Requests if exceeded. |
 | `VSEARCH_SEED_ON_START` | `0` | `0`, `1` | If `1`, automatically generates and seeds ~20,000 clustered demo vectors on startup (ideal for ephemeral cloud tiers). |
 | `VSEARCH_SNAPSHOT_INTERVAL`| `300` (seconds) | Positive integer | Background periodic snapshot checkpoint interval in seconds. |
+| `GROQ_API_KEY` | `None` (disabled) | String | API key for Groq Cloud. Used by server-side `POST /assistant`. If omitted, assistant returns HTTP 503 and chat box is hidden. |
+| `GROQ_MODEL` | `llama-3.1-8b-instant` | String | Model identifier for Groq chat completions. |
+| `ASSISTANT_DAILY_CAP` | `300` | Positive integer | Global daily query cap across all visitors for the AI assistant. Resets daily (UTC). |
 
 ---
 
@@ -78,13 +81,14 @@ Peak resident memory (RSS) was measured during snapshot serialization at $N=20,0
 | `/search/batch` | `POST` | **Read** | `VSEARCH_READ_KEY` or `VSEARCH_API_KEY` |
 | `/similar/{id}` | `GET` | **Demo Read** | `VSEARCH_PUBLIC_KEY`, `VSEARCH_READ_KEY`, or `VSEARCH_API_KEY` |
 | `/demo/random` | `GET` | **Demo Read** | `VSEARCH_PUBLIC_KEY`, `VSEARCH_READ_KEY`, or `VSEARCH_API_KEY` |
+| `/assistant` | `POST` | **Demo Read** | `VSEARCH_PUBLIC_KEY`, `VSEARCH_READ_KEY`, or `VSEARCH_API_KEY` |
 | `/vectors` | `POST` | **Write** | `VSEARCH_API_KEY` only |
 | `/vectors/batch` | `POST` | **Write** | `VSEARCH_API_KEY` only |
 | `/vectors/{id}` | `DELETE` | **Write** | `VSEARCH_API_KEY` only |
 
 > [!NOTE]
 > **Public Demo Key Isolation & Visibility**:
-> The `GET /` interactive demo page connects from the visitor's browser and executes read requests to `GET /similar/{node_id}` and `GET /demo/random`. The public key (`VSEARCH_PUBLIC_KEY`) is injected into the HTML and is visible to visitors inspecting network requests. This key is strictly confined to the `/similar` and `/demo/random` demo endpoints: it is rejected with HTTP 401 on `/search`, `/search/batch`, `/stats`, and all write routes (`POST/DELETE /vectors`). All demo requests remain guarded by the per-IP sliding-window rate limiter (`VSEARCH_RATE_LIMIT_RPS`).
+> The `GET /` interactive demo page connects from the visitor's browser and executes read requests to `GET /similar/{node_id}`, `GET /demo/random`, and `POST /assistant`. The public key (`VSEARCH_PUBLIC_KEY`) is injected into the HTML and is visible to visitors inspecting network requests. This key is strictly confined to these demo endpoints: it is rejected with HTTP 401 on `/search`, `/search/batch`, `/stats`, and all write routes (`POST/DELETE /vectors`). All demo requests remain guarded by their respective rate limiters (`VSEARCH_RATE_LIMIT_RPS` and 5/min per IP with a 300/day global cap on `/assistant`).
 
 ---
 

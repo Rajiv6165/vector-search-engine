@@ -508,3 +508,180 @@ def test_demo_endpoints():
         api_app.VSEARCH_ALLOW_INSECURE = True
         shutil.rmtree(temp_dir, ignore_errors=True)
 
+def test_assistant_endpoint():
+    """Verify Phase 13 POST /assistant endpoint, limits, rate limiting, daily cap, and Groq error handling."""
+    import io
+    import json
+    import urllib.error
+    from unittest.mock import patch, MagicMock
+
+    temp_dir = tempfile.mkdtemp()
+    api_app.PERSIST_DIR = temp_dir
+    api_app.VSEARCH_API_KEY = "write-key-test"
+    api_app.VSEARCH_READ_KEY = "read-key-test"
+    api_app.VSEARCH_PUBLIC_KEY = "public-key-test"
+    api_app.VSEARCH_ALLOW_INSECURE = False
+    os.environ["VSEARCH_API_KEY"] = "write-key-test"
+    os.environ["VSEARCH_READ_KEY"] = "read-key-test"
+    os.environ["VSEARCH_PUBLIC_KEY"] = "public-key-test"
+    os.environ["VSEARCH_ALLOW_INSECURE"] = "0"
+
+    app = api_app.app
+    try:
+        with TestClient(app) as client:
+            headers = {"X-API-Key": "public-key-test"}
+
+            # 1. Missing GROQ_API_KEY -> 503
+            api_app.GROQ_API_KEY = None
+            resp = client.post("/assistant", json={"question": "What is vsearch?"}, headers=headers)
+            assert resp.status_code == 503
+            assert "GROQ_API_KEY is missing" in resp.json()["detail"]
+
+            # Set GROQ_API_KEY for subsequent tests
+            api_app.GROQ_API_KEY = "mock_test_groq_key_12345"
+
+            # 2. Empty question -> 400
+            resp = client.post("/assistant", json={"question": "   "}, headers=headers)
+            assert resp.status_code == 400
+            assert "Question cannot be empty" in resp.json()["detail"]
+
+            # 3. Question too long (>500 chars) -> 400
+            long_q = "a" * 501
+            resp = client.post("/assistant", json={"question": long_q}, headers=headers)
+            assert resp.status_code == 400
+            assert "exceeds maximum length of 500 characters" in resp.json()["detail"]
+
+            # 3b. Context too long (>1000 chars) -> 400
+            long_ctx = {"large_payload": "x" * 1001}
+            resp = client.post("/assistant", json={"question": "What is vsearch?", "context": long_ctx}, headers=headers)
+            assert resp.status_code == 400
+            assert "Context exceeds maximum allowed size" in resp.json()["detail"]
+
+            # 4. Successful assistant response with mocked Groq call
+            mock_groq_resp = {
+                "choices": [{
+                    "message": {
+                        "content": "vsearch is an in-memory vector search engine implementing HNSW."
+                    }
+                }]
+            }
+            mock_handle = MagicMock()
+            mock_handle.status = 200
+            mock_handle.read.return_value = json.dumps(mock_groq_resp).encode("utf-8")
+            mock_handle.__enter__.return_value = mock_handle
+
+            with patch("urllib.request.urlopen", return_value=mock_handle):
+                resp = client.post(
+                    "/assistant",
+                    json={"question": "What is vsearch?", "context": {"category": "electronics"}},
+                    headers=headers
+                )
+                assert resp.status_code == 200
+                assert resp.json()["answer"] == "vsearch is an in-memory vector search engine implementing HNSW."
+
+            # 5. Per-IP Rate Limiting (5 requests per minute)
+            api_app.assistant_ip_limiter.max_requests = 5
+            api_app.assistant_ip_limiter.window_seconds = 60.0
+            api_app.assistant_ip_limiter._requests.clear()
+            api_app.assistant_daily_tracker.reset()
+            api_app.assistant_daily_tracker.daily_cap = 300
+
+            with patch("urllib.request.urlopen", return_value=mock_handle):
+                for i in range(5):
+                    r = client.post("/assistant", json={"question": f"Question {i}?"}, headers=headers)
+                    assert r.status_code == 200
+
+                # 6th request from same IP should get 429
+                r = client.post("/assistant", json={"question": "Question 6?"}, headers=headers)
+                assert r.status_code == 429
+                assert "5 questions per minute" in r.json()["detail"]
+
+                # Request from different IP (via X-Forwarded-For) succeeds
+                r_diff = client.post(
+                    "/assistant",
+                    json={"question": "Question from another IP?"},
+                    headers={"X-API-Key": "public-key-test", "X-Forwarded-For": "203.0.113.195"}
+                )
+                assert r_diff.status_code == 200
+
+            # 6. Global Daily Cap
+            api_app.assistant_ip_limiter._requests.clear()
+            api_app.assistant_daily_tracker.reset()
+            api_app.assistant_daily_tracker.daily_cap = 2
+
+            with patch("urllib.request.urlopen", return_value=mock_handle):
+                r1 = client.post("/assistant", json={"question": "Cap query 1?"}, headers=headers)
+                assert r1.status_code == 200
+                r2 = client.post("/assistant", json={"question": "Cap query 2?"}, headers=headers)
+                assert r2.status_code == 200
+                # 3rd query exceeds daily cap
+                r3 = client.post("/assistant", json={"question": "Cap query 3?"}, headers=headers)
+                assert r3.status_code == 429
+                assert "Daily question limit reached" in r3.json()["detail"]
+
+            # Reset daily cap
+            api_app.assistant_daily_tracker.reset()
+            api_app.assistant_daily_tracker.daily_cap = 300
+            api_app.assistant_ip_limiter._requests.clear()
+
+            # 7. Groq Errors Handling
+            # 7a. Groq returns 429 (rate-limited) -> 429
+            http_err_429 = urllib.error.HTTPError(
+                url="https://api.groq.com",
+                code=429,
+                msg="Too Many Requests",
+                hdrs={},
+                fp=io.BytesIO(b'{"error": "rate_limit_exceeded"}')
+            )
+            with patch("urllib.request.urlopen", side_effect=http_err_429):
+                r = client.post("/assistant", json={"question": "Groq rate limit?"}, headers=headers)
+                assert r.status_code == 429
+                assert "busy or rate-limited" in r.json()["detail"]
+
+            # 7b. Groq returns 500 (internal server error) -> 502
+            http_err_500 = urllib.error.HTTPError(
+                url="https://api.groq.com",
+                code=500,
+                msg="Server Error",
+                hdrs={},
+                fp=io.BytesIO(b'{"error": "internal"}')
+            )
+            with patch("urllib.request.urlopen", side_effect=http_err_500):
+                r = client.post("/assistant", json={"question": "Groq server error?"}, headers=headers)
+                assert r.status_code == 502
+                assert "returned error HTTP 500" in r.json()["detail"]
+
+            # 7c. Groq Timeout -> 504
+            with patch("urllib.request.urlopen", side_effect=TimeoutError("Connection timed out")):
+                r = client.post("/assistant", json={"question": "Groq timeout?"}, headers=headers)
+                assert r.status_code == 504
+                assert "timed out after 15 seconds" in r.json()["detail"]
+
+            # 8. Auth: Public key allowed on /assistant, but strictly rejected on /search, /stats, /vectors
+            with patch("urllib.request.urlopen", return_value=mock_handle):
+                # Public key succeeds on /assistant
+                assert client.post("/assistant", json={"question": "Auth test"}, headers={"X-API-Key": "public-key-test"}).status_code == 200
+                # Invalid key rejected on /assistant
+                assert client.post("/assistant", json={"question": "Auth test"}, headers={"X-API-Key": "bad-key"}).status_code == 401
+
+            # Public key rejected on /search, /stats, /vectors
+            assert client.get("/stats", headers={"X-API-Key": "public-key-test"}).status_code == 401
+            assert client.post("/search", json={"vector": [0.1, 0.2, 0.3, 0.4], "k": 1}, headers={"X-API-Key": "public-key-test"}).status_code == 401
+            assert client.post("/vectors", json={"node_id": 99, "vector": [0.1, 0.2, 0.3, 0.4]}, headers={"X-API-Key": "public-key-test"}).status_code == 401
+    finally:
+        api_app.GROQ_API_KEY = None
+        api_app.VSEARCH_API_KEY = None
+        api_app.VSEARCH_READ_KEY = None
+        api_app.VSEARCH_PUBLIC_KEY = None
+        api_app.VSEARCH_ALLOW_INSECURE = True
+        os.environ["VSEARCH_ALLOW_INSECURE"] = "1"
+        os.environ.pop("VSEARCH_API_KEY", None)
+        os.environ.pop("VSEARCH_READ_KEY", None)
+        os.environ.pop("VSEARCH_PUBLIC_KEY", None)
+        api_app.assistant_ip_limiter.max_requests = 5
+        api_app.assistant_ip_limiter.window_seconds = 60.0
+        api_app.assistant_ip_limiter._requests.clear()
+        api_app.assistant_daily_tracker.reset()
+        api_app.assistant_daily_tracker.daily_cap = 300
+        shutil.rmtree(temp_dir, ignore_errors=True)
+

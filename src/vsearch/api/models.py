@@ -101,3 +101,10 @@ class RandomNodeResponse(BaseModel):
     node_id: int
     metadata: Dict[str, Any]
 
+class AssistantRequest(BaseModel):
+    question: str = Field(..., description="The user question for the assistant.")
+    context: Optional[Any] = Field(None, description="Optional context regarding current query or results.")
+
+class AssistantResponse(BaseModel):
+    answer: str
+
