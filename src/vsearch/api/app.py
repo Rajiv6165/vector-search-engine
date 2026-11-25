@@ -8,8 +8,7 @@ import socket
 import asyncio
 import secrets
 import threading
-import urllib.request
-import urllib.error
+import httpx
 from collections import defaultdict, deque
 import numpy as np
 import logging
@@ -815,43 +814,53 @@ def ask_assistant(
         "temperature": 0.2
     }
 
-    data_bytes = json.dumps(payload).encode("utf-8")
     groq_url = "https://api.groq.com/openai/v1/chat/completions"
-    groq_req = urllib.request.Request(
-        groq_url,
-        data=data_bytes,
-        headers={
-            "Authorization": f"Bearer {GROQ_API_KEY.strip()}",
-            "Content-Type": "application/json"
-        },
-        method="POST"
-    )
+    groq_headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY.strip()}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "vsearch-demo/1.0",
+    }
 
     try:
-        with urllib.request.urlopen(groq_req, timeout=15.0) as resp:
-            resp_body = resp.read().decode("utf-8")
-            data = json.loads(resp_body)
-            choices = data.get("choices", [])
-            if not choices:
-                raise HTTPException(status_code=502, detail="Empty response from AI service.")
-            answer = choices[0].get("message", {}).get("content", "").strip()
-            return AssistantResponse(answer=answer)
-    except urllib.error.HTTPError as e:
-        if e.code == 429:
-            raise HTTPException(
-                status_code=429,
-                detail="AI service is currently busy or rate-limited. Please wait a moment and try again."
-            )
-        raise HTTPException(
-            status_code=502,
-            detail=f"AI service returned error HTTP {e.code}. Please try again later."
+        resp = httpx.post(
+            groq_url,
+            json=payload,
+            headers=groq_headers,
+            timeout=15.0
         )
-    except (urllib.error.URLError, TimeoutError, socket.timeout):
+        if resp.status_code < 200 or resp.status_code >= 300:
+            snippet = resp.text[:200]
+            logger.warning("Groq API error HTTP %d: %s", resp.status_code, snippet)
+            if resp.status_code in (401, 403):
+                raise HTTPException(
+                    status_code=503,
+                    detail="AI assistant service is currently unavailable."
+                )
+            if resp.status_code == 429:
+                raise HTTPException(
+                    status_code=429,
+                    detail="AI service is currently busy or rate-limited. Please wait a moment and try again."
+                )
+            raise HTTPException(
+                status_code=502,
+                detail=f"AI service returned error HTTP {resp.status_code}. Please try again later."
+            )
+
+        data = resp.json()
+        choices = data.get("choices", [])
+        if not choices:
+            raise HTTPException(status_code=502, detail="Empty response from AI service.")
+        answer = choices[0].get("message", {}).get("content", "").strip()
+        return AssistantResponse(answer=answer)
+    except HTTPException:
+        raise
+    except (httpx.TimeoutException, TimeoutError, socket.timeout):
         raise HTTPException(
             status_code=504,
             detail="Request to AI assistant timed out after 15 seconds. Please try again."
         )
     except Exception as e:
-        logger.error(f"Error querying Groq API: {e}", exc_info=True)
+        logger.warning("Groq API request error: %s", str(e)[:200])
         raise HTTPException(status_code=502, detail="Failed to communicate with AI assistant service.")
 

@@ -510,9 +510,8 @@ def test_demo_endpoints():
 
 def test_assistant_endpoint():
     """Verify Phase 13 POST /assistant endpoint, limits, rate limiting, daily cap, and Groq error handling."""
-    import io
     import json
-    import urllib.error
+    import httpx
     from unittest.mock import patch, MagicMock
 
     temp_dir = tempfile.mkdtemp()
@@ -565,12 +564,9 @@ def test_assistant_endpoint():
                     }
                 }]
             }
-            mock_handle = MagicMock()
-            mock_handle.status = 200
-            mock_handle.read.return_value = json.dumps(mock_groq_resp).encode("utf-8")
-            mock_handle.__enter__.return_value = mock_handle
+            mock_resp_200 = httpx.Response(200, json=mock_groq_resp)
 
-            with patch("urllib.request.urlopen", return_value=mock_handle):
+            with patch("httpx.post", return_value=mock_resp_200) as mock_post:
                 resp = client.post(
                     "/assistant",
                     json={"question": "What is vsearch?", "context": {"category": "electronics"}},
@@ -578,6 +574,11 @@ def test_assistant_endpoint():
                 )
                 assert resp.status_code == 200
                 assert resp.json()["answer"] == "vsearch is an in-memory vector search engine implementing HNSW."
+                call_headers = mock_post.call_args[1]["headers"]
+                assert call_headers["User-Agent"] == "vsearch-demo/1.0"
+                assert call_headers["Accept"] == "application/json"
+                assert call_headers["Content-Type"] == "application/json"
+                assert "Bearer" in call_headers["Authorization"]
 
             # 5. Per-IP Rate Limiting (5 requests per minute)
             api_app.assistant_ip_limiter.max_requests = 5
@@ -586,7 +587,7 @@ def test_assistant_endpoint():
             api_app.assistant_daily_tracker.reset()
             api_app.assistant_daily_tracker.daily_cap = 300
 
-            with patch("urllib.request.urlopen", return_value=mock_handle):
+            with patch("httpx.post", return_value=mock_resp_200):
                 for i in range(5):
                     r = client.post("/assistant", json={"question": f"Question {i}?"}, headers=headers)
                     assert r.status_code == 200
@@ -609,7 +610,7 @@ def test_assistant_endpoint():
             api_app.assistant_daily_tracker.reset()
             api_app.assistant_daily_tracker.daily_cap = 2
 
-            with patch("urllib.request.urlopen", return_value=mock_handle):
+            with patch("httpx.post", return_value=mock_resp_200):
                 r1 = client.post("/assistant", json={"question": "Cap query 1?"}, headers=headers)
                 assert r1.status_code == 200
                 r2 = client.post("/assistant", json={"question": "Cap query 2?"}, headers=headers)
@@ -625,40 +626,62 @@ def test_assistant_endpoint():
             api_app.assistant_ip_limiter._requests.clear()
 
             # 7. Groq Errors Handling
-            # 7a. Groq returns 429 (rate-limited) -> 429
-            http_err_429 = urllib.error.HTTPError(
-                url="https://api.groq.com",
-                code=429,
-                msg="Too Many Requests",
-                hdrs={},
-                fp=io.BytesIO(b'{"error": "rate_limit_exceeded"}')
-            )
-            with patch("urllib.request.urlopen", side_effect=http_err_429):
+            # 7a. Groq returns 401 (Unauthorized) -> 503
+            resp_401 = httpx.Response(401, text='{"error": {"message": "Invalid API Key"}}')
+            with patch("httpx.post", return_value=resp_401), patch.object(api_app.logger, "warning") as mock_log:
+                r = client.post("/assistant", json={"question": "Groq 401 test?"}, headers=headers)
+                assert r.status_code == 503
+                assert "currently unavailable" in r.json()["detail"]
+                mock_log.assert_called()
+                log_args = str(mock_log.call_args)
+                assert "401" in log_args
+                assert "Invalid API Key" in log_args
+                assert "mock_test_groq_key" not in log_args
+                assert "Groq 401 test?" not in log_args
+
+            # 7b. Groq returns 403 (Forbidden) -> 503
+            resp_403 = httpx.Response(403, text='{"error": {"message": "Forbidden access"}}')
+            with patch("httpx.post", return_value=resp_403), patch.object(api_app.logger, "warning") as mock_log:
+                r = client.post("/assistant", json={"question": "Groq 403 test?"}, headers=headers)
+                assert r.status_code == 503
+                assert "currently unavailable" in r.json()["detail"]
+                mock_log.assert_called()
+                log_args = str(mock_log.call_args)
+                assert "403" in log_args
+                assert "Forbidden access" in log_args
+                assert "mock_test_groq_key" not in log_args
+                assert "Groq 403 test?" not in log_args
+
+            # 7c. Groq returns 429 (rate-limited) -> 429
+            resp_429 = httpx.Response(429, text='{"error": {"message": "Rate limit exceeded"}}')
+            with patch("httpx.post", return_value=resp_429), patch.object(api_app.logger, "warning") as mock_log:
                 r = client.post("/assistant", json={"question": "Groq rate limit?"}, headers=headers)
                 assert r.status_code == 429
                 assert "busy or rate-limited" in r.json()["detail"]
+                mock_log.assert_called()
+                log_args = str(mock_log.call_args)
+                assert "429" in log_args
 
-            # 7b. Groq returns 500 (internal server error) -> 502
-            http_err_500 = urllib.error.HTTPError(
-                url="https://api.groq.com",
-                code=500,
-                msg="Server Error",
-                hdrs={},
-                fp=io.BytesIO(b'{"error": "internal"}')
-            )
-            with patch("urllib.request.urlopen", side_effect=http_err_500):
+            # 7d. Groq returns 500 (internal server error) -> 502
+            resp_500 = httpx.Response(500, text='{"error": {"message": "Internal Server Error"}}')
+            with patch("httpx.post", return_value=resp_500), patch.object(api_app.logger, "warning") as mock_log:
                 r = client.post("/assistant", json={"question": "Groq server error?"}, headers=headers)
                 assert r.status_code == 502
                 assert "returned error HTTP 500" in r.json()["detail"]
+                mock_log.assert_called()
+                log_args = str(mock_log.call_args)
+                assert "500" in log_args
 
-            # 7c. Groq Timeout -> 504
-            with patch("urllib.request.urlopen", side_effect=TimeoutError("Connection timed out")):
+            # 7e. Groq Timeout -> 504
+            with patch("httpx.post", side_effect=httpx.TimeoutException("Connection timed out")):
                 r = client.post("/assistant", json={"question": "Groq timeout?"}, headers=headers)
                 assert r.status_code == 504
                 assert "timed out after 15 seconds" in r.json()["detail"]
 
             # 8. Auth: Public key allowed on /assistant, but strictly rejected on /search, /stats, /vectors
-            with patch("urllib.request.urlopen", return_value=mock_handle):
+            api_app.assistant_ip_limiter._requests.clear()
+            api_app.assistant_daily_tracker.reset()
+            with patch("httpx.post", return_value=mock_resp_200):
                 # Public key succeeds on /assistant
                 assert client.post("/assistant", json={"question": "Auth test"}, headers={"X-API-Key": "public-key-test"}).status_code == 200
                 # Invalid key rejected on /assistant
