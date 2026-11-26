@@ -437,10 +437,13 @@ def test_demo_endpoints():
         html_resp = api_app.get_demo_page()
         assert html_resp.status_code == 200
         html_content = html_resp.body.decode("utf-8")
-        assert "vsearch Demo" in html_content
+        assert "vsearch — Vector Search Engine" in html_content
+        assert "vsearch" in html_content
+        assert "<table" in html_content
         assert "Pick random item" in html_content
         assert "/docs" in html_content
-        assert "20,000 synthetic 64-d vectors" in html_content
+        assert "20,000" in html_content
+        assert "synthetic 64-d vectors" in html_content
         assert "public-key-123" in html_content
 
         # 2. Auth: verify_demo_key vs verify_write_key
@@ -837,4 +840,49 @@ def test_assistant_endpoint():
         api_app.assistant_daily_tracker.reset()
         api_app.assistant_daily_tracker.daily_cap = 300
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+def test_landing_page_and_static_files():
+    """Verify Phase 14 landing page GET / and self-hosted static font assets."""
+    temp_dir = tempfile.mkdtemp()
+    api_app.PERSIST_DIR = temp_dir
+    api_app.VSEARCH_API_KEY = "write-key-landing-test"
+    api_app.VSEARCH_PUBLIC_KEY = "public-test-key-xyz"
+    api_app.VSEARCH_ALLOW_INSECURE = False
+    os.environ["VSEARCH_API_KEY"] = "write-key-landing-test"
+    os.environ["VSEARCH_PUBLIC_KEY"] = "public-test-key-xyz"
+    os.environ["VSEARCH_ALLOW_INSECURE"] = "0"
+
+    app = api_app.app
+    try:
+        with TestClient(app) as client:
+            # 1. GET / asserts HTTP 200, public key placeholder replaced, "vsearch", and results table
+            resp = client.get("/")
+            assert resp.status_code == 200
+            assert "text/html" in resp.headers.get("content-type", "")
+            content = resp.text
+            assert "vsearch — Vector Search Engine" in content
+            assert "public-test-key-xyz" in content
+            assert "{{ PUBLIC_KEY }}" not in content
+            assert "vsearch" in content
+            assert "<table" in content
+            assert "Pick random item" in content
+
+            # 2. GET /static/fonts/inter-variable.woff2 returns HTTP 200
+            font_resp = client.get("/static/fonts/inter-variable.woff2")
+            assert font_resp.status_code == 200
+            assert len(font_resp.content) > 1000
+
+            # 3. GET /static/fonts/instrument-serif-italic.woff2 returns HTTP 200
+            font_resp2 = client.get("/static/fonts/instrument-serif-italic.woff2")
+            assert font_resp2.status_code == 200
+            assert len(font_resp2.content) > 1000
+    finally:
+        api_app.VSEARCH_API_KEY = None
+        api_app.VSEARCH_PUBLIC_KEY = None
+        api_app.VSEARCH_ALLOW_INSECURE = True
+        os.environ["VSEARCH_ALLOW_INSECURE"] = "1"
+        os.environ.pop("VSEARCH_API_KEY", None)
+        os.environ.pop("VSEARCH_PUBLIC_KEY", None)
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
 

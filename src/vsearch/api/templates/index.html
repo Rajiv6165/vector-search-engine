@@ -3,468 +3,1322 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>vsearch &mdash; Vector Search Engine Demo</title>
-  <style>
-    :root {
-      --bg: #0b0f19;
-      --surface: #131b2e;
-      --surface-border: #1f2d4a;
-      --text-main: #f1f5f9;
-      --text-muted: #94a3b8;
-      --primary: #38bdf8;
-      --primary-hover: #0ea5e9;
-      --accent: #818cf8;
-      --success: #34d399;
-      --warning: #fbbf24;
-      --danger: #f87171;
-      --radius: 10px;
-    }
+  <title>vsearch — Vector Search Engine</title>
 
-    * {
-      box-sizing: border-box;
+  <!-- Google Fonts Fallback -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
+
+  <style>
+    /* -------------------------------------------------------------------------
+       1. Core Reset & Design Tokens (Strict Pure Black System)
+       ------------------------------------------------------------------------- */
+    html, body {
+      background: #000000 !important;
+      color: #ffffff;
       margin: 0;
       padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      scroll-behavior: smooth;
+    }
+
+    *, *::before, *::after {
+      box-sizing: inherit;
+    }
+
+    @font-face {
+      font-family: 'Inter';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/static/fonts/inter-variable.woff2') format('woff2');
+    }
+
+    @font-face {
+      font-family: 'Instrument Serif';
+      font-style: italic;
+      font-weight: 400;
+      font-display: swap;
+      src: url('/static/fonts/instrument-serif-italic.woff2') format('woff2');
+    }
+
+    :root {
+      --bg: #000000;
+      --text: #ffffff;
+      --muted: #9a9a9a;
+      --stat: #d8d8d8;
+      --border: rgba(255, 255, 255, 0.16);
+      --border-soft: rgba(255, 255, 255, 0.12);
+      --surface: #0a0a0a;
+      --surface-elevated: #111111;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-serif: 'Instrument Serif', Georgia, serif;
+      --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     body {
-      background-color: var(--bg);
-      color: var(--text-main);
+      font-family: var(--font-sans);
       line-height: 1.5;
-      padding: 2rem 1rem;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* Accessibility focus rings */
+    :focus-visible {
+      outline: 2px solid #ffffff;
+      outline-offset: 3px;
+    }
+
+    /* -------------------------------------------------------------------------
+       2. Subtle Grain Overlay (CSS Only)
+       ------------------------------------------------------------------------- */
+    .grain-overlay {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 100;
+      pointer-events: none;
+      opacity: 0.04;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    }
+
+    /* -------------------------------------------------------------------------
+       3. Typography & Layout Containers
+       ------------------------------------------------------------------------- */
+    .serif-accent {
+      font-family: var(--font-serif);
+      font-style: italic;
+      font-weight: 400;
+      color: #9a9a9a;
+      letter-spacing: 0;
     }
 
     .container {
-      max-width: 900px;
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 0 24px;
       width: 100%;
     }
 
-    header {
-      margin-bottom: 2rem;
-      text-align: center;
-    }
-
-    h1 {
-      font-size: 2.25rem;
-      font-weight: 700;
-      margin-bottom: 0.75rem;
-      background: linear-gradient(135deg, #38bdf8, #818cf8);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    .lead {
-      color: var(--text-muted);
-      font-size: 1.05rem;
-      max-width: 720px;
-      margin: 0 auto 1rem auto;
-    }
-
-    .meta-note {
-      font-size: 0.85rem;
-      color: #64748b;
-      margin-bottom: 1.25rem;
-    }
-
-    .header-links {
-      display: flex;
-      justify-content: center;
-      gap: 1.5rem;
-      margin-top: 0.75rem;
-    }
-
-    .header-links a {
-      color: var(--primary);
-      text-decoration: none;
-      font-size: 0.95rem;
-      font-weight: 500;
+    /* -------------------------------------------------------------------------
+       4. Buttons & Interactive Liquid Metal Pills
+       ------------------------------------------------------------------------- */
+    .btn {
       display: inline-flex;
       align-items: center;
-      gap: 0.35rem;
-      transition: color 0.15s ease;
+      justify-content: center;
+      gap: 8px;
+      height: 40px;
+      padding: 0 20px;
+      font-size: 13.5px;
+      font-weight: 500;
+      border-radius: 6px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.25s var(--ease-out-expo);
+      white-space: nowrap;
+      position: relative;
+      overflow: hidden;
     }
 
-    .header-links a:hover {
-      color: var(--primary-hover);
-      text-decoration: underline;
+    .btn-hero {
+      height: 42px;
+      padding: 0 24px;
     }
 
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--surface-border);
-      border-radius: var(--radius);
-      padding: 1.5rem;
-      margin-bottom: 1.5rem;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    .btn-solid {
+      background: linear-gradient(180deg, #ffffff 0%, #d8d8d8 100%);
+      color: #111111;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
     }
 
-    .controls-grid {
+    .btn-solid::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+      transform: translateX(-130%) skewX(-20deg);
+      transition: transform 0.6s var(--ease-out-expo);
+    }
+
+    .btn-solid:hover {
+      box-shadow: 0 0 22px rgba(200, 225, 255, 0.45), 0 2px 10px rgba(0, 0, 0, 0.6);
+      transform: translateY(-1px);
+    }
+
+    .btn-solid:hover::after {
+      transform: translateX(130%) skewX(-20deg);
+    }
+
+    .btn-ghost {
+      background: rgba(255, 255, 255, 0.06);
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    .btn-ghost:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.4);
+      transform: translateY(-1px);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    /* Liquid-metal nav pills */
+    .nav-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 40px;
+      padding: 0 18px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #ffffff;
+      border-radius: 7px;
+      border: 1px solid rgba(198, 198, 198, 0.55);
+      background: linear-gradient(105deg, #050505 0%, #2a2a2a 48%, #4a4a4a 100%);
+      text-decoration: none;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.2s ease;
+    }
+
+    .nav-pill::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+      transform: translateX(-120%) skewX(-20deg);
+      transition: transform 0.6s var(--ease-out-expo);
+    }
+
+    .nav-pill:hover {
+      border-color: rgba(255, 255, 255, 0.85);
+      box-shadow: 0 0 16px rgba(255, 255, 255, 0.18);
+      transform: translateY(-1px);
+    }
+
+    .nav-pill:hover::after {
+      transform: translateX(120%) skewX(-20deg);
+    }
+
+    /* -------------------------------------------------------------------------
+       5. Header (3-Column Grid)
+       ------------------------------------------------------------------------- */
+    .site-header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      z-index: 50;
+      padding: 22px 40px;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    .header-grid {
       display: grid;
-      grid-template-columns: 1fr auto auto;
-      gap: 1rem;
-      align-items: end;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      max-width: 1400px;
+      margin: 0 auto;
     }
 
-    @media (max-width: 640px) {
-      .controls-grid {
-        grid-template-columns: 1fr;
-      }
+    .header-logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: #ffffff;
+      text-decoration: none;
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
     }
 
-    .form-group {
+    .header-logo-suffix {
+      font-weight: 400;
+      color: var(--muted);
+      font-size: 13px;
+      margin-left: -4px;
+    }
+
+    .header-nav {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .header-cta {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .burger-btn {
+      display: none;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: #fff;
+      padding: 8px 10px;
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .mobile-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.95);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      z-index: 60;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    .mobile-overlay.active {
+      display: flex;
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .mobile-overlay .nav-pill {
+      width: 240px;
+      height: 48px;
+      font-size: 16px;
+    }
+
+    .mobile-close-btn {
+      position: absolute;
+      top: 24px;
+      right: 28px;
+      background: transparent;
+      border: none;
+      color: #fff;
+      font-size: 28px;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    /* -------------------------------------------------------------------------
+       6. Hero Section (100dvh, Bottom-Centered Content)
+       ------------------------------------------------------------------------- */
+    .hero-section {
+      min-height: 100dvh;
       display: flex;
       flex-direction: column;
-      gap: 0.4rem;
+      justify-content: flex-end;
+      align-items: center;
+      padding-top: 120px;
+      padding-bottom: 48px;
+      text-align: center;
+      position: relative;
     }
 
-    label {
-      font-size: 0.85rem;
-      font-weight: 600;
+    .hero-badge {
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-muted);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      padding: 6px 14px;
+      border-radius: 20px;
+      margin-bottom: 24px;
+      background: rgba(255, 255, 255, 0.03);
     }
 
-    select, input {
-      background: #0f172a;
-      border: 1px solid var(--surface-border);
-      border-radius: 6px;
-      padding: 0.65rem 0.85rem;
-      color: var(--text-main);
-      font-size: 0.95rem;
-      outline: none;
-      transition: border-color 0.15s ease;
+    .hero-title {
+      font-size: 48px;
+      font-weight: 500;
+      line-height: 1.12;
+      letter-spacing: -0.045em;
+      margin: 0 0 20px 0;
+      max-width: 860px;
     }
 
-    select:focus, input:focus {
-      border-color: var(--primary);
+    .hero-line {
+      display: block;
     }
 
-    button {
-      background: var(--primary);
-      color: #0b0f19;
+    .hero-lede {
+      font-size: 15.5px;
+      line-height: 1.55;
+      color: var(--muted);
+      max-width: 470px;
+      margin: 0 auto 32px auto;
+    }
+
+    .hero-buttons {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      margin-bottom: 56px;
+    }
+
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+      width: 100%;
+      max-width: 860px;
+      border-top: 1px solid var(--border-soft);
+      padding-top: 32px;
+      margin: 0 auto;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .stat-value {
+      font-size: 19px;
       font-weight: 600;
-      border: none;
+      color: var(--stat);
+      letter-spacing: -0.02em;
+    }
+
+    .stat-desc {
+      font-size: 12.5px;
+      color: var(--muted);
+      max-width: 240px;
+      line-height: 1.35;
+    }
+
+    /* -------------------------------------------------------------------------
+       7. Interactive Demo Section (#demo)
+       ------------------------------------------------------------------------- */
+    .section {
+      padding: 96px 0;
+      position: relative;
+    }
+
+    .section-header {
+      margin-bottom: 40px;
+    }
+
+    .section-title {
+      font-size: 32px;
+      font-weight: 500;
+      letter-spacing: -0.035em;
+      margin: 0 0 10px 0;
+    }
+
+    .section-subtitle {
+      font-size: 15px;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .demo-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    .demo-controls {
+      display: grid;
+      grid-template-columns: 1fr 140px auto;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 24px;
+    }
+
+    .field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field-label {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .select-input, .num-input {
+      height: 40px;
+      background: #000000;
+      border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 0.65rem 1.25rem;
-      font-size: 0.95rem;
-      cursor: pointer;
-      transition: background-color 0.15s ease, transform 0.05s ease;
-      white-space: nowrap;
+      padding: 0 14px;
+      color: #ffffff;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s ease;
     }
 
-    button:hover {
-      background: var(--primary-hover);
+    .select-input:focus, .num-input:focus {
+      border-color: rgba(255, 255, 255, 0.6);
     }
 
-    button:active {
-      transform: scale(0.98);
-    }
-
-    button:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-
-    .active-query {
+    .telemetry-row {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 1.5rem;
-      margin-top: 1.25rem;
-      padding-top: 1.25rem;
-      border-top: 1px solid var(--surface-border);
+      gap: 20px;
+      padding: 16px 20px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      margin-bottom: 24px;
     }
 
-    .stat-pill {
-      display: inline-flex;
+    .telemetry-item {
+      display: flex;
       align-items: center;
-      gap: 0.4rem;
-      font-size: 0.875rem;
+      gap: 8px;
+      font-size: 13.5px;
     }
 
-    .stat-label {
-      color: var(--text-muted);
+    .telemetry-label {
+      color: var(--muted);
     }
 
-    .badge {
+    .telemetry-val {
+      font-weight: 600;
+      color: #ffffff;
+    }
+
+    .badge-path {
       display: inline-block;
-      padding: 0.2rem 0.55rem;
+      padding: 3px 8px;
       border-radius: 4px;
-      font-size: 0.8rem;
+      font-size: 12px;
       font-weight: 600;
       text-transform: uppercase;
+      letter-spacing: 0.03em;
     }
 
     .badge-graph {
       background: rgba(52, 211, 153, 0.15);
-      color: var(--success);
-      border: 1px solid rgba(52, 211, 153, 0.3);
+      color: #34d399;
+      border: 1px solid rgba(52, 211, 153, 0.35);
     }
 
     .badge-fallback {
       background: rgba(251, 191, 36, 0.15);
-      color: var(--warning);
-      border: 1px solid rgba(251, 191, 36, 0.3);
+      color: #fbbf24;
+      border: 1px solid rgba(251, 191, 36, 0.35);
     }
 
-    .alert {
-      padding: 1rem 1.25rem;
+    .table-wrapper {
+      overflow-x: auto;
+      border: 1px solid var(--border-soft);
       border-radius: 8px;
-      margin-bottom: 1.5rem;
-      font-size: 0.925rem;
+    }
+
+    .demo-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13.5px;
+    }
+
+    .demo-table th {
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+      font-weight: 500;
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    .demo-table td {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      color: #ffffff;
+    }
+
+    .demo-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .demo-table tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .badge-category {
+      display: inline-block;
+      padding: 2px 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      font-size: 12px;
+      color: var(--stat);
+    }
+
+    .dist-tag {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: #93c5fd;
+    }
+
+    .query-tag {
+      display: inline-block;
+      padding: 2px 6px;
+      background: rgba(147, 197, 253, 0.15);
+      color: #93c5fd;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .demo-alert {
+      padding: 12px 16px;
+      border-radius: 6px;
+      font-size: 13.5px;
+      margin-bottom: 20px;
       display: none;
     }
 
-    .alert-warning {
-      background: rgba(251, 191, 36, 0.12);
+    .demo-alert-warning {
+      background: rgba(251, 191, 36, 0.1);
       border: 1px solid rgba(251, 191, 36, 0.3);
       color: #fef08a;
     }
 
-    .alert-danger {
-      background: rgba(248, 113, 113, 0.12);
+    .demo-alert-danger {
+      background: rgba(248, 113, 113, 0.1);
       border: 1px solid rgba(248, 113, 113, 0.3);
       color: #fca5a5;
     }
 
+    .demo-note {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 18px;
+      text-align: center;
+    }
+
+    /* -------------------------------------------------------------------------
+       8. How It Works Section (#how)
+       ------------------------------------------------------------------------- */
+    .how-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+
+    .how-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .how-icon-box {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-soft);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #ffffff;
+    }
+
+    .how-card-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0;
+      line-height: 1.4;
+      color: #ffffff;
+    }
+
+    .how-card-desc {
+      font-size: 13.5px;
+      color: var(--muted);
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    /* -------------------------------------------------------------------------
+       9. Benchmarks Section (#benchmarks)
+       ------------------------------------------------------------------------- */
+    .benchmarks-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .benchmarks-table th, .benchmarks-table td {
+      padding: 14px 20px;
+      text-align: left;
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    .benchmarks-table th {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 13px;
+    }
+
+    .benchmarks-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .benchmarks-caption {
+      font-size: 12.5px;
+      color: var(--muted);
+      margin-top: 14px;
+      text-align: right;
+    }
+
+    /* -------------------------------------------------------------------------
+       10. Floating Assistant Widget
+       ------------------------------------------------------------------------- */
+    .assistant-toggle-btn {
+      position: fixed;
+      bottom: 28px;
+      right: 28px;
+      z-index: 90;
+      height: 44px;
+      padding: 0 18px;
+      border-radius: 22px;
+      background: linear-gradient(180deg, #ffffff 0%, #d8d8d8 100%);
+      color: #111111;
+      font-size: 13.5px;
+      font-weight: 600;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 15px rgba(255, 255, 255, 0.15);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .assistant-toggle-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 24px rgba(200, 225, 255, 0.35);
+    }
+
+    .assistant-card {
+      position: fixed;
+      bottom: 84px;
+      right: 28px;
+      width: 380px;
+      max-width: calc(100vw - 36px);
+      background: #0d0d0d;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.85);
+      z-index: 95;
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .assistant-card.active {
+      display: flex;
+    }
+
+    .assistant-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .assistant-title {
+      font-size: 15px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
+    }
+
+    .assistant-close {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 20px;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    .assistant-suggestions {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
     .btn-suggestion {
       background: rgba(255, 255, 255, 0.05);
-      color: var(--text-muted);
-      border: 1px solid var(--surface-border);
-      font-size: 0.8rem;
-      padding: 0.35rem 0.75rem;
-      border-radius: 20px;
+      border: 1px solid var(--border-soft);
+      color: #d1d5db;
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      text-align: left;
       cursor: pointer;
-      font-weight: 500;
       transition: all 0.15s ease;
     }
 
     .btn-suggestion:hover {
-      background: rgba(56, 189, 248, 0.15);
-      border-color: var(--primary);
-      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+    }
+
+    .assistant-messages {
+      max-height: 220px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-right: 4px;
     }
 
     .chat-bubble {
-      padding: 0.75rem 1rem;
+      padding: 8px 12px;
       border-radius: 8px;
-      font-size: 0.92rem;
+      font-size: 13px;
       line-height: 1.45;
-      max-width: 85%;
       word-break: break-word;
+      max-width: 90%;
     }
 
     .chat-user {
       align-self: flex-end;
-      background: rgba(56, 189, 248, 0.15);
-      border: 1px solid rgba(56, 189, 248, 0.3);
-      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.15);
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.25);
     }
 
     .chat-assistant {
       align-self: flex-start;
       background: rgba(255, 255, 255, 0.04);
-      border: 1px solid var(--surface-border);
-      color: var(--text-main);
+      color: #e5e7eb;
+      border: 1px solid var(--border-soft);
     }
 
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 0.5rem;
-      text-align: left;
+    .assistant-form {
+      display: flex;
+      gap: 8px;
     }
 
-    th {
-      font-size: 0.8rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-muted);
-      padding: 0.75rem 1rem;
-      border-bottom: 1px solid var(--surface-border);
+    .assistant-input {
+      flex: 1;
+      height: 36px;
+      background: #000000;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0 10px;
+      color: #ffffff;
+      font-size: 13px;
+      outline: none;
     }
 
-    td {
-      padding: 0.85rem 1rem;
-      border-bottom: 1px solid rgba(31, 45, 74, 0.5);
-      font-size: 0.925rem;
+    .assistant-input:focus {
+      border-color: rgba(255, 255, 255, 0.6);
     }
 
-    tr:hover td {
-      background: rgba(255, 255, 255, 0.02);
+    .assistant-send {
+      height: 36px;
+      padding: 0 14px;
+      font-size: 12.5px;
     }
 
-    .dist-val {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      color: var(--accent);
-      font-weight: 500;
+    .assistant-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #64748b;
     }
 
-    .node-val {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      color: var(--primary);
+    /* -------------------------------------------------------------------------
+       11. Footer
+       ------------------------------------------------------------------------- */
+    .site-footer {
+      border-top: 1px solid var(--border-soft);
+      padding: 48px 0 64px 0;
+      color: var(--muted);
+      font-size: 13.5px;
     }
 
-    .empty-state {
-      text-align: center;
-      padding: 3rem 1rem;
-      color: var(--text-muted);
+    .footer-content {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 20px;
     }
 
-    footer {
-      margin-top: 2rem;
-      text-align: center;
-      font-size: 0.8rem;
-      color: #475569;
+    .footer-links {
+      display: flex;
+      gap: 20px;
+    }
+
+    .footer-links a {
+      color: var(--muted);
+      text-decoration: none;
+      transition: color 0.2s ease;
+    }
+
+    .footer-links a:hover {
+      color: #ffffff;
+    }
+
+    .portfolio-link {
+      color: #ffffff;
+      text-decoration: none;
+      border-bottom: 1px dashed var(--border);
+    }
+
+    .portfolio-link:hover {
+      border-bottom-style: solid;
+    }
+
+    /* -------------------------------------------------------------------------
+       12. Entrance Animation & Responsive Breakpoints
+       ------------------------------------------------------------------------- */
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(18px) scale(0.985);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    .animate-in {
+      animation: fadeInUp 0.8s var(--ease-out-expo) forwards;
+      opacity: 1; /* Resting opacity 1 so page is never blank if animation doesn't run */
+    }
+
+    .delay-1 { animation-delay: 0.08s; }
+    .delay-2 { animation-delay: 0.16s; }
+    .delay-3 { animation-delay: 0.24s; }
+    .delay-4 { animation-delay: 0.32s; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+
+    /* Responsive typography & layouts */
+    @media (min-width: 1920px) {
+      .hero-title { font-size: 76px; }
+      .container { max-width: 960px; }
+    }
+
+    @media (min-width: 1600px) and (max-width: 1919px) {
+      .hero-title { font-size: 64px; }
+    }
+
+    @media (min-width: 1280px) and (max-width: 1599px) {
+      .hero-title { font-size: 54px; }
+    }
+
+    @media (min-width: 901px) and (max-width: 1279px) {
+      .hero-title { font-size: 42px; }
+    }
+
+    @media (max-width: 900px) {
+      .hero-title { font-size: 36px; }
+      .site-header { padding: 18px 24px; }
+      .header-nav { display: none; }
+      .header-cta { display: none; }
+      .burger-btn { display: inline-flex; }
+      .how-grid { grid-template-columns: 1fr; }
+      .demo-controls { grid-template-columns: 1fr; }
+      .hero-stats { grid-template-columns: 1fr; gap: 20px; text-align: center; }
+    }
+
+    @media (max-width: 560px) {
+      .hero-buttons { flex-direction: column; width: 100%; }
+      .hero-buttons .btn { width: 100%; }
+      .footer-content { flex-direction: column; align-items: flex-start; }
     }
   </style>
 </head>
-<body>
-  <div class="container">
-    <header>
-      <h1>vsearch Demo</h1>
-      <p class="lead">
-        vsearch is an in-memory vector database built from scratch with an HNSW index, C++/AVX2 distance acceleration, and hybrid filtered search. This interactive demo explores 20,000 synthetic 64-dimensional vectors clustered across consumer categories.
+
+<body style="background:#000;color:#fff">
+  <!-- Subtle Grain Texture -->
+  <div class="grain-overlay" aria-hidden="true"></div>
+
+  <!-- Mobile Navigation Overlay -->
+  <div id="mobile-nav" class="mobile-overlay" role="dialog" aria-modal="true" aria-label="Mobile Navigation">
+    <button class="mobile-close-btn" id="mobile-close" aria-label="Close menu">&times;</button>
+    <a href="#demo" class="nav-pill mobile-link">Demo</a>
+    <a href="#how" class="nav-pill mobile-link">How it works</a>
+    <a href="#benchmarks" class="nav-pill mobile-link">Benchmarks</a>
+    <a href="/docs" target="_blank" class="nav-pill mobile-link">API Docs</a>
+    <a href="#demo" class="btn btn-solid mobile-link" style="width: 240px; height: 48px; margin-top: 10px;">Try the demo</a>
+  </div>
+
+  <!-- 1. Header (3-Column Grid) -->
+  <header class="site-header">
+    <div class="header-grid">
+      <!-- Left: Logo -->
+      <a href="#" class="header-logo" aria-label="vsearch home">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="9" stroke="#ffffff" stroke-width="2"/>
+          <circle cx="12" cy="12" r="3" fill="#ffffff"/>
+          <path d="M12 3V6M12 18V21M3 12H6M18 12H21" stroke="rgba(255,255,255,0.4)" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span>vsearch</span>
+        <span class="header-logo-suffix">engine</span>
+      </a>
+
+      <!-- Center: Nav Pills -->
+      <nav class="header-nav" aria-label="Main navigation">
+        <a href="#demo" class="nav-pill">Demo</a>
+        <a href="#how" class="nav-pill">How it works</a>
+        <a href="#benchmarks" class="nav-pill">Benchmarks</a>
+        <a href="/docs" target="_blank" class="nav-pill">API Docs</a>
+      </nav>
+
+      <!-- Right: CTA Button & Mobile Trigger -->
+      <div class="header-cta">
+        <a href="#demo" class="btn btn-solid">Try the demo</a>
+      </div>
+      <button class="burger-btn" id="burger-toggle" aria-expanded="false" aria-controls="mobile-nav" aria-label="Open menu">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="3" y1="6" x2="21" y2="6"/>
+          <line x1="3" y1="12" x2="21" y2="12"/>
+          <line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- 2. Hero Section (One Viewport Tall, Bottom-Centered) -->
+  <section class="hero-section">
+    <div class="container animate-in delay-1">
+      <div class="hero-badge">From-scratch HNSW vector search</div>
+      
+      <h1 class="hero-title">
+        <span class="hero-line">Search by <em class="serif-accent">meaning</em>, not</span>
+        <span class="hero-line">by keywords.</span>
+      </h1>
+
+      <p class="hero-lede">
+        vsearch is a vector database built from scratch in Python and C++. It finds the most similar items in milliseconds, with metadata filters.
       </p>
-      <div class="meta-note">
-        Note: The demonstration index contains 20,000 synthetic 64-d vectors. Demo data resets when the free server restarts. Persistence (WAL and snapshots) is tested separately in the repo.
-      </div>
-      <div class="header-links">
-        <a href="/docs" target="_blank">&rarr; Interactive API Docs (/docs)</a>
-        <a href="https://github.com/Rajiv6165/vector-search-engine" target="_blank">&rarr; GitHub Repository</a>
-      </div>
-    </header>
 
-    <div id="alert-box" class="alert alert-warning">
-      <span id="alert-message"></span>
-    </div>
-
-    <div class="card">
-      <div class="controls-grid">
-        <div class="form-group">
-          <label for="category-select">Filter by Category</label>
-          <select id="category-select">
-            <option value="">All Categories (No filter)</option>
-            <option value="electronics">Electronics</option>
-            <option value="clothing">Clothing</option>
-            <option value="home">Home</option>
-            <option value="books">Books</option>
-            <option value="sports">Sports</option>
-          </select>
-        </div>
-
-        <div class="form-group">
-          <label for="k-input">Neighbors (k)</label>
-          <input id="k-input" type="number" min="1" max="100" value="10" style="width: 80px;" />
-        </div>
-
-        <button id="btn-random" onclick="pickRandomAndSearch()">
-          Pick random item
-        </button>
+      <div class="hero-buttons">
+        <a href="#demo" class="btn btn-solid btn-hero">Try the live demo</a>
+        <a href="https://github.com/Rajiv6165/vector-search-engine" target="_blank" rel="noopener" class="btn btn-ghost btn-hero">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+          View on GitHub
+        </a>
       </div>
 
-      <div id="query-summary" class="active-query" style="display: none;">
-        <div class="stat-pill">
-          <span class="stat-label">Query Node:</span>
-          <strong id="stat-query-node" class="node-val">#0</strong>
+      <div class="hero-stats">
+        <div class="stat-item">
+          <span class="stat-value">20,000</span>
+          <span class="stat-desc">demo vectors loaded</span>
         </div>
-        <div class="stat-pill">
-          <span class="stat-label">Category:</span>
-          <span id="stat-query-cat" style="color: var(--text-main); font-weight: 500;">-</span>
+        <div class="stat-item">
+          <span class="stat-value">&lt; 5 ms</span>
+          <span class="stat-desc">typically under a few ms (server-side)</span>
         </div>
-        <div class="stat-pill">
-          <span class="stat-label">Engine latency (server-side):</span>
-          <span id="stat-latency" style="color: var(--success); font-weight: 600;">- ms</span>
-        </div>
-        <div class="stat-pill">
-          <span class="stat-label">Search Path:</span>
-          <span id="stat-path" class="badge badge-graph">Graph</span>
+        <div class="stat-item">
+          <span class="stat-value">96.1–100%</span>
+          <span class="stat-desc">recall@10 (local benchmark on 100K SIFT vectors, not the free demo server)</span>
         </div>
       </div>
     </div>
+  </section>
 
-    <div class="card">
-      <table id="results-table">
+  <!-- 3. Interactive Demo Section (#demo) -->
+  <section id="demo" class="section">
+    <div class="container animate-in delay-2">
+      <div class="section-header">
+        <h2 class="section-title">Try it</h2>
+        <p class="section-subtitle">Pick an item and see its nearest neighbours.</p>
+      </div>
+
+      <!-- Demo Alert Box for Server Wake-Up / Errors -->
+      <div id="demo-alert" class="demo-alert demo-alert-warning" role="alert" aria-live="polite"></div>
+
+      <div class="demo-card">
+        <div class="demo-controls">
+          <div class="field-group">
+            <label for="category-select" class="field-label">Filter by Category</label>
+            <select id="category-select" class="select-input">
+              <option value="">All Categories (No filter)</option>
+              <option value="electronics">Electronics</option>
+              <option value="clothing">Clothing</option>
+              <option value="home">Home</option>
+              <option value="books">Books</option>
+              <option value="sports">Sports</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="k-input" class="field-label">Neighbours (k)</label>
+            <input id="k-input" type="number" min="1" max="100" value="10" class="num-input" />
+          </div>
+
+          <button id="btn-random" class="btn btn-solid" style="height: 40px;" onclick="pickRandomAndSearch()">
+            Pick random item
+          </button>
+        </div>
+
+        <!-- Telemetry Row -->
+        <div id="telemetry-box" class="telemetry-row" style="display: none;" aria-live="polite">
+          <div class="telemetry-item">
+            <span class="telemetry-label">Query node:</span>
+            <span id="telemetry-node" class="telemetry-val">#0</span>
+          </div>
+          <div class="telemetry-item">
+            <span class="telemetry-label">Category:</span>
+            <span id="telemetry-cat" class="telemetry-val">-</span>
+          </div>
+          <div class="telemetry-item">
+            <span class="telemetry-label">Engine latency (server-side):</span>
+            <span id="telemetry-latency" class="telemetry-val">- ms</span>
+          </div>
+          <div class="telemetry-item">
+            <span class="telemetry-label">Search path:</span>
+            <span id="telemetry-path" class="badge-path badge-graph">Graph search</span>
+          </div>
+        </div>
+
+        <!-- Results Table -->
+        <div class="table-wrapper">
+          <table class="demo-table" aria-label="Nearest neighbor search results">
+            <thead>
+              <tr>
+                <th scope="col" style="width: 70px;">Rank</th>
+                <th scope="col" style="width: 100px;">Node ID</th>
+                <th scope="col" style="width: 130px;">Category</th>
+                <th scope="col">Metadata</th>
+                <th scope="col" style="width: 120px;">Distance</th>
+              </tr>
+            </thead>
+            <tbody id="results-body">
+              <tr>
+                <td colspan="5" style="text-align: center; color: var(--muted); padding: 32px 16px;">
+                  Pick a random item or choose a category to begin.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="demo-note">
+          Demo data is synthetic 64-d vectors and resets when the free server restarts.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. How It Works Section (#how) -->
+  <section id="how" class="section" style="border-top: 1px solid var(--border-soft);">
+    <div class="container animate-in delay-3">
+      <div class="section-header">
+        <h2 class="section-title">How it works</h2>
+        <p class="section-subtitle">A high-performance HNSW vector search pipeline designed from first principles.</p>
+      </div>
+
+      <div class="how-grid">
+        <div class="how-card">
+          <div class="how-icon-box" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M3 9h18M9 21V9"/>
+            </svg>
+          </div>
+          <h3 class="how-card-title">1. Turn items into numbers (vectors)</h3>
+          <p class="how-card-desc">
+            Embeddings represent semantic properties as high-dimensional coordinates, placing similar concepts close together in metric space.
+          </p>
+        </div>
+
+        <div class="how-card">
+          <div class="how-icon-box" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="6" cy="6" r="3"/>
+              <circle cx="18" cy="6" r="3"/>
+              <circle cx="12" cy="18" r="3"/>
+              <line x1="8.5" y1="7.5" x2="10" y2="15.5"/>
+              <line x1="15.5" y1="7.5" x2="14" y2="15.5"/>
+              <line x1="9" y1="6" x2="15" y2="6"/>
+            </svg>
+          </div>
+          <h3 class="how-card-title">2. Index them in a layered graph (HNSW)</h3>
+          <p class="how-card-desc">
+            Upper graph layers act as long-range express highways for rapid navigation; lower layers provide fine-grained nearest neighbor connections.
+          </p>
+        </div>
+
+        <div class="how-card">
+          <div class="how-icon-box" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+          </div>
+          <h3 class="how-card-title">3. Jump to the closest ones instead of checking everything</h3>
+          <p class="how-card-desc">
+            Greedy beam search navigates directly to the target neighborhood in logarithmic steps, avoiding exhaustive scans across millions of items.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. Benchmarks Section (#benchmarks) -->
+  <section id="benchmarks" class="section" style="border-top: 1px solid var(--border-soft);">
+    <div class="container animate-in delay-4">
+      <div class="section-header">
+        <h2 class="section-title">Benchmarks</h2>
+        <p class="section-subtitle">Real verified benchmark figures from test suites and SIFT evaluations.</p>
+      </div>
+
+      <table class="benchmarks-table" aria-label="Engine benchmarks summary">
         <thead>
           <tr>
-            <th>Rank</th>
-            <th>Node ID</th>
-            <th>Category</th>
-            <th>Metadata Details</th>
-            <th>Distance</th>
+            <th scope="col">Benchmark Condition</th>
+            <th scope="col">Evaluation & Result</th>
+            <th scope="col">Execution Guarantee</th>
           </tr>
         </thead>
-        <tbody id="results-body">
+        <tbody>
           <tr>
-            <td colspan="5" class="empty-state">
-              Click <strong>&ldquo;Pick random item&rdquo;</strong> to sample a query vector and explore nearest neighbors.
-            </td>
+            <td><strong>Filtered Search (100K SIFT)</strong></td>
+            <td>Tested across 8 conditions (128-d vectors) with recall@10 between <strong>96.1% and 100%</strong> (local benchmark on 100K SIFT vectors, not the free demo server)</td>
+            <td>In-graph traversal with adaptive budget scaling</td>
+          </tr>
+          <tr>
+            <td><strong>Low-Selectivity Fallback</strong></td>
+            <td>Brute-force exact fallback activated below <strong>2,000 matches</strong></td>
+            <td>Eliminates recall collapse under restrictive filters</td>
+          </tr>
+          <tr>
+            <td><strong>Automated Test Suite</strong></td>
+            <td><strong>34 automated tests</strong> verified across engine subsystems</td>
+            <td>Covers crash recovery, concurrency, and native-vs-Python parity</td>
           </tr>
         </tbody>
       </table>
-    </div>
-
-    <!-- Phase 13: Ask vsearch Assistant -->
-    <div id="assistant-card" class="card" style="display: none;">
-      <div style="margin-bottom: 1rem;">
-        <h3 style="font-size: 1.15rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem;">
-          <span>💬</span> Ask vsearch
-        </h3>
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem;">
-          Ask any question about vsearch, vector search, HNSW, or this demo.
-        </p>
-      </div>
-
-      <!-- Suggested Questions -->
-      <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem;">
-        <button type="button" class="btn-suggestion" data-q="What does this demo show?">What does this demo show?</button>
-        <button type="button" class="btn-suggestion" data-q="What is HNSW?">What is HNSW?</button>
-        <button type="button" class="btn-suggestion" data-q="Why are these items similar?">Why are these items similar?</button>
-      </div>
-
-      <!-- Messages Stream -->
-      <div id="assistant-messages" style="display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1rem; max-height: 320px; overflow-y: auto;">
-      </div>
-
-      <!-- Assistant Error Alert -->
-      <div id="assistant-alert" class="alert alert-danger" style="display: none; margin-bottom: 1rem;">
-        <span id="assistant-alert-msg"></span>
-      </div>
-
-      <!-- Input Form -->
-      <form id="assistant-form" style="display: flex; gap: 0.5rem;">
-        <input type="text" id="assistant-input" placeholder="Ask a question about vector search or this demo..." maxlength="500" style="flex: 1;" />
-        <button type="submit" id="assistant-btn">Ask</button>
-      </form>
-
-      <div style="margin-top: 0.6rem; display: flex; justify-content: space-between; align-items: center;">
-        <span id="assistant-status" style="font-size: 0.8rem; color: var(--primary);"></span>
-        <span style="font-size: 0.75rem; color: #64748b;">AI answers may be wrong</span>
+      <div class="benchmarks-caption">
+        Benchmarks were run locally, not on the free demo server.
       </div>
     </div>
+  </section>
 
-    <footer>
-      vsearch engine &bull; Single-process SIMD vector indexing &bull; vsearch demo
-    </footer>
+  <!-- 6. Assistant Widget (Floating Bottom-Right) -->
+  <button id="ast-toggle" class="assistant-toggle-btn" aria-expanded="false" aria-controls="ast-card" style="display: none;">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+    </svg>
+    <span>Ask vsearch</span>
+  </button>
+
+  <div id="ast-card" class="assistant-card" role="dialog" aria-modal="false" aria-label="AI Assistant">
+    <div class="assistant-header">
+      <h3 class="assistant-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 16v-4M12 8h.01"/>
+        </svg>
+        <span>Ask vsearch</span>
+      </h3>
+      <button id="ast-close" class="assistant-close" aria-label="Close assistant">&times;</button>
+    </div>
+
+    <!-- Suggested questions -->
+    <div class="assistant-suggestions">
+      <button type="button" class="btn-suggestion" data-q="What does this demo show?">What does this demo show?</button>
+      <button type="button" class="btn-suggestion" data-q="What is HNSW?">What is HNSW?</button>
+      <button type="button" class="btn-suggestion" data-q="Why are these items similar?">Why are these items similar?</button>
+    </div>
+
+    <!-- Message Stream -->
+    <div id="ast-messages" class="assistant-messages" aria-live="polite"></div>
+
+    <!-- Alert / Status -->
+    <div id="ast-alert" class="demo-alert demo-alert-danger" style="padding: 8px 12px; margin-bottom: 0;"></div>
+
+    <!-- Input Form -->
+    <form id="ast-form" class="assistant-form">
+      <input type="text" id="ast-input" class="assistant-input" placeholder="Ask about vector search or this demo..." maxlength="500" required />
+      <button type="submit" id="ast-btn" class="btn btn-solid assistant-send">Ask</button>
+    </form>
+
+    <div class="assistant-meta">
+      <span id="ast-status"></span>
+      <span>AI answers may be wrong.</span>
+    </div>
   </div>
 
+  <!-- 7. Footer -->
+  <footer class="site-footer">
+    <div class="container footer-content">
+      <div class="footer-links">
+        <a href="/docs" target="_blank">Interactive Docs (/docs)</a>
+        <a href="/redoc" target="_blank">ReDoc (/redoc)</a>
+        <a href="https://github.com/Rajiv6165/vector-search-engine" target="_blank" rel="noopener">GitHub</a>
+      </div>
+      <div>
+        Built by <a href="https://github.com/Rajiv6165" target="_blank" rel="noopener" class="portfolio-link">Rajiv</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- -------------------------------------------------------------------------
+       8. Isolated JavaScript Logic (Demo & Assistant)
+       ------------------------------------------------------------------------- -->
   <script>
-    // Embedded public read key injected by FastAPI template
+    // Server-injected values
     const PUBLIC_KEY = "{{ PUBLIC_KEY }}";
     const HAS_ASSISTANT = "{{ HAS_ASSISTANT }}" === "true";
     let currentContext = null;
 
-    if (HAS_ASSISTANT) {
-      const astCard = document.getElementById("assistant-card");
-      if (astCard) astCard.style.display = "block";
-    }
-
+    // Build auth headers using injected public read key
     function getHeaders() {
       const headers = { "Content-Type": "application/json" };
       if (PUBLIC_KEY && PUBLIC_KEY.trim() !== "") {
@@ -473,31 +1327,88 @@
       return headers;
     }
 
-    function showAlert(msg, isError = false) {
-      const box = document.getElementById("alert-box");
-      const msgEl = document.getElementById("alert-message");
-      box.className = "alert " + (isError ? "alert-danger" : "alert-warning");
-      msgEl.textContent = msg;
-      box.style.display = "block";
+    // -------------------------------------------------------------------------
+    // Animation fallback & mobile navigation handlers
+    // -------------------------------------------------------------------------
+    (function initUI() {
+      // Staggered entrance fallback
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          document.querySelectorAll('.animate-in').forEach(el => el.classList.add('is-in'));
+        });
+      });
+
+      // Mobile burger navigation
+      const burger = document.getElementById("burger-toggle");
+      const overlay = document.getElementById("mobile-nav");
+      const closeBtn = document.getElementById("mobile-close");
+
+      function openMenu() {
+        if (!overlay) return;
+        overlay.classList.add("active");
+        if (burger) burger.setAttribute("aria-expanded", "true");
+        document.body.style.overflow = "hidden";
+      }
+
+      function closeMenu() {
+        if (!overlay) return;
+        overlay.classList.remove("active");
+        if (burger) burger.setAttribute("aria-expanded", "false");
+        document.body.style.overflow = "";
+      }
+
+      if (burger) burger.addEventListener("click", openMenu);
+      if (closeBtn) closeBtn.addEventListener("click", closeMenu);
+
+      document.querySelectorAll(".mobile-link").forEach(link => {
+        link.addEventListener("click", closeMenu);
+      });
+
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeMenu();
+      });
+
+      window.addEventListener("resize", () => {
+        if (window.innerWidth >= 901) closeMenu();
+      });
+    })();
+
+    // -------------------------------------------------------------------------
+    // Demo Search Controller (Strict textContent only, no innerHTML)
+    // -------------------------------------------------------------------------
+    function showDemoAlert(msg, isError = false) {
+      const el = document.getElementById("demo-alert");
+      if (!el) return;
+      el.className = "demo-alert " + (isError ? "demo-alert-danger" : "demo-alert-warning");
+      el.textContent = msg;
+      el.style.display = "block";
     }
 
-    function hideAlert() {
-      document.getElementById("alert-box").style.display = "none";
+    function hideDemoAlert() {
+      const el = document.getElementById("demo-alert");
+      if (el) el.style.display = "none";
     }
 
     async function pickRandomAndSearch() {
       const btn = document.getElementById("btn-random");
       const catSelect = document.getElementById("category-select");
       const kInput = document.getElementById("k-input");
-      const category = catSelect.value;
-      const k = parseInt(kInput.value, 10) || 10;
+      const category = catSelect ? catSelect.value : "";
+      const k = parseInt(kInput ? kInput.value : 10, 10) || 10;
 
-      btn.disabled = true;
-      btn.textContent = "Loading...";
-      hideAlert();
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Loading...";
+      }
+      hideDemoAlert();
+
+      // Free host wakeup timer
+      let wakeupTimer = setTimeout(() => {
+        showDemoAlert("The free server is waking up, this can take up to a minute");
+      }, 4000);
 
       try {
-        // 1. Fetch a random item
+        // 1. Fetch random node
         let randomUrl = "/demo/random";
         if (category) {
           randomUrl += `?category=${encodeURIComponent(category)}`;
@@ -507,24 +1418,31 @@
         try {
           resp = await fetch(randomUrl, { headers: getHeaders() });
         } catch (netErr) {
-          showAlert("⚠️ Unable to reach service. The server may be waking up from an idle spin-down (first request on Render free tier takes about a minute). Please wait a moment and try again.");
-          btn.disabled = false;
-          btn.textContent = "Pick random item";
+          showDemoAlert("Unable to reach service. The free server may be waking up from an idle spin-down. Please try again shortly.", true);
           return;
         }
 
+        clearTimeout(wakeupTimer);
+
+        if (resp.status === 401) {
+          showDemoAlert("Authentication error: Public demo key was rejected.", true);
+          return;
+        }
+        if (resp.status === 404) {
+          showDemoAlert("No nodes found for the selected filter.", true);
+          return;
+        }
+        if (resp.status === 429) {
+          showDemoAlert("Rate limit reached. Please wait a few seconds before searching again.", true);
+          return;
+        }
         if (resp.status === 503) {
-          showAlert("⏳ Server is initializing demo vectors. Please wait 10-15 seconds and try again.");
-          btn.disabled = false;
-          btn.textContent = "Pick random item";
+          showDemoAlert("Server is initializing demo vectors. Please wait 10 seconds and try again.");
           return;
         }
-
         if (!resp.ok) {
           const errData = await resp.json().catch(() => ({ detail: resp.statusText }));
-          showAlert(`Error fetching random vector: ${errData.detail || resp.statusText}`, true);
-          btn.disabled = false;
-          btn.textContent = "Pick random item";
+          showDemoAlert(`Error fetching random node: ${errData.detail || resp.statusText}`, true);
           return;
         }
 
@@ -539,21 +1457,26 @@
         }
 
         const simResp = await fetch(similarUrl, { headers: getHeaders() });
+        if (simResp.status === 429) {
+          showDemoAlert("Rate limit reached on search. Please wait a moment.", true);
+          return;
+        }
         if (!simResp.ok) {
           const errData = await simResp.json().catch(() => ({ detail: simResp.statusText }));
-          showAlert(`Error searching similar items: ${errData.detail || simResp.statusText}`, true);
-          btn.disabled = false;
-          btn.textContent = "Pick random item";
+          showDemoAlert(`Error searching similar items: ${errData.detail || simResp.statusText}`, true);
           return;
         }
 
         const simData = await simResp.json();
         renderResults(nodeId, queryMeta, simData);
       } catch (err) {
-        showAlert(`Unexpected error: ${err.message}`, true);
+        showDemoAlert(`Unexpected error: ${err.message}`, true);
       } finally {
-        btn.disabled = false;
-        btn.textContent = "Pick random item";
+        clearTimeout(wakeupTimer);
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "Pick random item";
+        }
       }
     }
 
@@ -566,17 +1489,25 @@
         search_path: simData.search_path
       };
 
-      document.getElementById("query-summary").style.display = "flex";
-      document.getElementById("stat-query-node").textContent = `#${nodeId}`;
-      document.getElementById("stat-query-cat").textContent = queryMeta.category || "None";
-      document.getElementById("stat-latency").textContent = `${simData.latency_ms.toFixed(3)} ms`;
+      const telemBox = document.getElementById("telemetry-box");
+      const telemNode = document.getElementById("telemetry-node");
+      const telemCat = document.getElementById("telemetry-cat");
+      const telemLat = document.getElementById("telemetry-latency");
+      const telemPath = document.getElementById("telemetry-path");
 
-      const pathBadge = document.getElementById("stat-path");
-      const isFallback = simData.used_exact_fallback || simData.search_path === "exact_fallback";
-      pathBadge.className = isFallback ? "badge badge-fallback" : "badge badge-graph";
-      pathBadge.textContent = isFallback ? "Exact Fallback" : "Graph Search";
+      if (telemBox) telemBox.style.display = "flex";
+      if (telemNode) telemNode.textContent = `#${nodeId}`;
+      if (telemCat) telemCat.textContent = queryMeta.category || "None";
+      if (telemLat) telemLat.textContent = `${simData.latency_ms.toFixed(3)} ms`;
+
+      if (telemPath) {
+        const isFallback = simData.used_exact_fallback || simData.search_path === "exact_fallback";
+        telemPath.className = isFallback ? "badge-path badge-fallback" : "badge-path badge-graph";
+        telemPath.textContent = isFallback ? "Exact fallback" : "Graph search";
+      }
 
       const tbody = document.getElementById("results-body");
+      if (!tbody) return;
       while (tbody.firstChild) {
         tbody.removeChild(tbody.firstChild);
       }
@@ -585,7 +1516,9 @@
         const tr = document.createElement("tr");
         const td = document.createElement("td");
         td.colSpan = 5;
-        td.className = "empty-state";
+        td.style.textAlign = "center";
+        td.style.color = "var(--muted)";
+        td.style.padding = "24px 16px";
         td.textContent = "No similar vectors found.";
         tr.appendChild(td);
         tbody.appendChild(tr);
@@ -595,6 +1528,8 @@
       simData.results.forEach((item, idx) => {
         const meta = item.metadata || {};
         const cat = meta.category || "n/a";
+        const isQueryNode = (item.node_id === nodeId);
+
         const metaEntries = Object.entries(meta)
           .filter(([k]) => k !== "category")
           .map(([k, v]) => `${k}: ${v}`)
@@ -602,130 +1537,186 @@
 
         const tr = document.createElement("tr");
 
+        // Rank
         const tdRank = document.createElement("td");
-        const strongRank = document.createElement("strong");
-        strongRank.textContent = `#${idx + 1}`;
-        tdRank.appendChild(strongRank);
+        if (isQueryNode) {
+          const qSpan = document.createElement("span");
+          qSpan.className = "query-tag";
+          qSpan.textContent = "query";
+          tdRank.appendChild(qSpan);
+        } else {
+          tdRank.textContent = `#${idx + 1}`;
+        }
         tr.appendChild(tdRank);
 
+        // Node ID
         const tdNode = document.createElement("td");
-        tdNode.className = "node-val";
-        tdNode.textContent = item.node_id;
+        tdNode.style.fontWeight = "600";
+        tdNode.textContent = String(item.node_id);
         tr.appendChild(tdNode);
 
+        // Category
         const tdCat = document.createElement("td");
-        const badgeCat = document.createElement("span");
-        badgeCat.className = "badge";
-        badgeCat.style.background = "rgba(255,255,255,0.06)";
-        badgeCat.style.color = "var(--text-main)";
-        badgeCat.textContent = cat;
-        tdCat.appendChild(badgeCat);
+        const catSpan = document.createElement("span");
+        catSpan.className = "badge-category";
+        catSpan.textContent = cat;
+        tdCat.appendChild(catSpan);
         tr.appendChild(tdCat);
 
+        // Metadata
         const tdMeta = document.createElement("td");
-        tdMeta.style.color = "var(--text-muted)";
-        tdMeta.style.fontSize = "0.85rem";
+        tdMeta.style.color = "var(--muted)";
+        tdMeta.style.fontSize = "12.5px";
         tdMeta.textContent = metaEntries;
         tr.appendChild(tdMeta);
 
+        // Distance
         const tdDist = document.createElement("td");
-        tdDist.className = "dist-val";
-        tdDist.textContent = typeof item.distance === "number" ? item.distance.toFixed(4) : item.distance;
+        const distSpan = document.createElement("span");
+        distSpan.className = "dist-tag";
+        if (isQueryNode) {
+          distSpan.textContent = "0.0000 (query)";
+        } else {
+          distSpan.textContent = typeof item.distance === "number" ? item.distance.toFixed(4) : String(item.distance);
+        }
+        tdDist.appendChild(distSpan);
         tr.appendChild(tdDist);
 
         tbody.appendChild(tr);
       });
     }
 
-    const astForm = document.getElementById("assistant-form");
-    const astInput = document.getElementById("assistant-input");
-    const astBtn = document.getElementById("assistant-btn");
-    const astMessages = document.getElementById("assistant-messages");
-    const astAlert = document.getElementById("assistant-alert");
-    const astAlertMsg = document.getElementById("assistant-alert-msg");
-    const astStatus = document.getElementById("assistant-status");
+    // -------------------------------------------------------------------------
+    // Floating Assistant Controller
+    // -------------------------------------------------------------------------
+    (function initAssistant() {
+      const toggleBtn = document.getElementById("ast-toggle");
+      const card = document.getElementById("ast-card");
+      const closeBtn = document.getElementById("ast-close");
+      const form = document.getElementById("ast-form");
+      const input = document.getElementById("ast-input");
+      const btn = document.getElementById("ast-btn");
+      const messages = document.getElementById("ast-messages");
+      const alertBox = document.getElementById("ast-alert");
+      const statusEl = document.getElementById("ast-status");
 
-    function showAssistantError(msg) {
-      if (astAlert && astAlertMsg) {
-        astAlertMsg.textContent = msg;
-        astAlert.style.display = "block";
+      if (HAS_ASSISTANT && toggleBtn) {
+        toggleBtn.style.display = "inline-flex";
       }
-    }
 
-    function hideAssistantError() {
-      if (astAlert) {
-        astAlert.style.display = "none";
+      function openCard() {
+        if (!card) return;
+        card.classList.add("active");
+        if (toggleBtn) toggleBtn.setAttribute("aria-expanded", "true");
+        if (input) input.focus();
       }
-    }
 
-    function appendMessage(role, text) {
-      if (!astMessages) return;
-      const bubble = document.createElement("div");
-      bubble.className = "chat-bubble " + (role === "user" ? "chat-user" : "chat-assistant");
-      bubble.textContent = text;
-      astMessages.appendChild(bubble);
-      astMessages.scrollTop = astMessages.scrollHeight;
-    }
+      function closeCard() {
+        if (!card) return;
+        card.classList.remove("active");
+        if (toggleBtn) toggleBtn.setAttribute("aria-expanded", "false");
+      }
 
-    async function sendAssistantQuestion(questionText) {
-      const q = (questionText || "").trim();
-      if (!q) return;
-
-      hideAssistantError();
-      appendMessage("user", q);
-      astInput.value = "";
-      astInput.disabled = true;
-      astBtn.disabled = true;
-      astBtn.textContent = "Thinking...";
-      if (astStatus) astStatus.textContent = "Generating response...";
-
-      try {
-        const resp = await fetch("/assistant", {
-          method: "POST",
-          headers: getHeaders(),
-          body: JSON.stringify({ question: q, context: currentContext })
+      if (toggleBtn) {
+        toggleBtn.addEventListener("click", () => {
+          if (card && card.classList.contains("active")) {
+            closeCard();
+          } else {
+            openCard();
+          }
         });
-
-        if (resp.status === 503) {
-          const card = document.getElementById("assistant-card");
-          if (card) card.style.display = "none";
-          return;
-        }
-
-        if (!resp.ok) {
-          const errData = await resp.json().catch(() => ({ detail: resp.statusText }));
-          showAssistantError(errData.detail || "Error from assistant service.");
-          return;
-        }
-
-        const data = await resp.json();
-        appendMessage("assistant", data.answer || "I don't know.");
-      } catch (err) {
-        showAssistantError(`Failed to contact assistant: ${err.message}`);
-      } finally {
-        astInput.disabled = false;
-        astBtn.disabled = false;
-        astBtn.textContent = "Ask";
-        if (astStatus) astStatus.textContent = "";
-        astInput.focus();
       }
-    }
 
-    if (astForm) {
-      astForm.addEventListener("submit", function (e) {
-        e.preventDefault();
-        sendAssistantQuestion(astInput.value);
-      });
-    }
+      if (closeBtn) closeBtn.addEventListener("click", closeCard);
 
-    document.querySelectorAll(".btn-suggestion").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        const q = btn.getAttribute("data-q");
-        if (q) {
-          sendAssistantQuestion(q);
+      function showAstAlert(msg) {
+        if (alertBox) {
+          alertBox.textContent = msg;
+          alertBox.style.display = "block";
         }
+      }
+
+      function hideAstAlert() {
+        if (alertBox) alertBox.style.display = "none";
+      }
+
+      function appendAstMessage(role, text) {
+        if (!messages) return;
+        const bubble = document.createElement("div");
+        bubble.className = "chat-bubble " + (role === "user" ? "chat-user" : "chat-assistant");
+        bubble.textContent = text;
+        messages.appendChild(bubble);
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      async function sendQuestion(rawQ) {
+        const q = (rawQ || "").trim();
+        if (!q) return;
+
+        hideAstAlert();
+        appendAstMessage("user", q);
+        if (input) input.value = "";
+        if (input) input.disabled = true;
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = "Thinking...";
+        }
+        if (statusEl) statusEl.textContent = "Generating response...";
+
+        try {
+          const resp = await fetch("/assistant", {
+            method: "POST",
+            headers: getHeaders(),
+            body: JSON.stringify({ question: q, context: currentContext })
+          });
+
+          if (resp.status === 404 || resp.status === 503) {
+            // Hide widget entirely if service is unavailable or model not found
+            if (card) card.classList.remove("active");
+            if (toggleBtn) toggleBtn.style.display = "none";
+            return;
+          }
+
+          if (resp.status === 429) {
+            showAstAlert("Daily limit or rate limit reached. Please wait a moment.");
+            return;
+          }
+
+          if (!resp.ok) {
+            const errData = await resp.json().catch(() => ({ detail: resp.statusText }));
+            showAstAlert(errData.detail || "Error from assistant service.");
+            return;
+          }
+
+          const data = await resp.json();
+          appendAstMessage("assistant", data.answer || "I don't know.");
+        } catch (err) {
+          showAstAlert(`Failed to contact assistant: ${err.message}`);
+        } finally {
+          if (input) input.disabled = false;
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = "Ask";
+          }
+          if (statusEl) statusEl.textContent = "";
+          if (input) input.focus();
+        }
+      }
+
+      if (form) {
+        form.addEventListener("submit", (e) => {
+          e.preventDefault();
+          if (input) sendQuestion(input.value);
+        });
+      }
+
+      document.querySelectorAll(".btn-suggestion").forEach(sBtn => {
+        sBtn.addEventListener("click", () => {
+          const q = sBtn.getAttribute("data-q");
+          if (q) sendQuestion(q);
+        });
       });
-    });
+    })();
   </script>
 </body>
 </html>

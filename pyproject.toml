@@ -11,5 +11,5 @@ description = "Vector search engine"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"vsearch.api" = ["templates/*.html"]
+"vsearch.api" = ["templates/*.html", "static/**/*", "static/*"]
 

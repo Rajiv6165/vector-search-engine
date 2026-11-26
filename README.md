@@ -158,3 +158,10 @@ For those who want to go deep into the systems engineering decisions, read throu
 *   [Phase 10: Filtered Vector Search](PHASE10_FILTERED_SEARCH.md)
 *   [Architecture Explainer](ARCHITECTURE_EXPLAINER.md)
 *   [Deployment Guide](DEPLOYMENT.md)
+
+## Typography & Assets
+
+The web interface uses self-hosted typefaces under the SIL Open Font License 1.1:
+*   [Inter](https://rsms.me/inter/) by Rasmus Andersson (OFL 1.1)
+*   [Instrument Serif](https://instrument.com/) by Rodrigo Fuenzalida & Jordan Engel (OFL 1.1)
+

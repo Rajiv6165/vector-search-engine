@@ -36,11 +36,15 @@ def make_request(
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             code = resp.status
-            body = resp.read().decode("utf-8")
+            raw_bytes = resp.read()
             try:
-                return code, json.loads(body) if body else {}
-            except Exception:
-                return code, {"raw": body}
+                body = raw_bytes.decode("utf-8")
+                try:
+                    return code, json.loads(body) if body else {}
+                except Exception:
+                    return code, {"raw": body}
+            except UnicodeDecodeError:
+                return code, {"raw_bytes_len": len(raw_bytes)}
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8")
         try:
@@ -69,13 +73,23 @@ def run_smoke_test(base_url: str, write_key: Optional[str] = None, read_key: Opt
         print(f"  [FAIL] /health failed: HTTP {code}, body: {data}")
         all_passed = False
 
-    # 2. GET / (Interactive Demo Page)
-    print("\n[2/7] Checking GET / (Interactive Demo Page)...")
+    # 2. GET / (Interactive Landing Page & Demo)
+    print("\n[2/7] Checking GET / (Interactive Landing Page & Demo)...")
     code, html_data = make_request(f"{base}/")
-    if code == 200 and ("vsearch Demo" in html_data.get("raw", "") or "vsearch" in html_data.get("raw", "")):
-        print(f"  [PASS] GET / returned HTTP 200 with interactive demo page HTML")
+    html_raw = html_data.get("raw", "")
+    if code == 200 and "vsearch — Vector Search Engine" in html_raw and "<table" in html_raw:
+        print(f"  [PASS] GET / returned HTTP 200 with landing page and results table")
     else:
         print(f"  [FAIL] GET / failed: HTTP {code}, body: {html_data}")
+        all_passed = False
+
+    # 2b. Static Assets (Self-hosted Fonts)
+    print("\nChecking GET /static/fonts/inter-variable.woff2 (Self-hosted font)...")
+    code_font, _ = make_request(f"{base}/static/fonts/inter-variable.woff2")
+    if code_font == 200:
+        print(f"  [PASS] /static/fonts/inter-variable.woff2 returned HTTP 200")
+    else:
+        print(f"  [FAIL] Static font route failed: HTTP {code_font}")
         all_passed = False
 
     # 3. GET /stats (Read Key)

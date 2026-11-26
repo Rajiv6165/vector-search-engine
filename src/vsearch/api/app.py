@@ -17,6 +17,7 @@ from typing import Optional, Dict, Any, List
 
 from fastapi import FastAPI, HTTPException, Security, Depends, Request, Query
 from fastapi.security import APIKeyHeader
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, HTMLResponse
 
@@ -438,6 +439,11 @@ async def lifespan(app: FastAPI):
     logger.info("Shutdown complete.")
 
 app = FastAPI(title="Vector Search Engine", lifespan=lifespan)
+
+# Static files for self-hosted fonts and assets
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(STATIC_DIR, exist_ok=True)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Request size limiter middleware
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
