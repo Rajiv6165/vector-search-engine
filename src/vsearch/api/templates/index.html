@@ -333,7 +333,7 @@
         vsearch is an in-memory vector database built from scratch with an HNSW index, C++/AVX2 distance acceleration, and hybrid filtered search. This interactive demo explores 20,000 synthetic 64-dimensional vectors clustered across consumer categories.
       </p>
       <div class="meta-note">
-        Note: The demonstration index contains 20,000 synthetic 64-d vectors with single-process ACID durability.
+        Note: The demonstration index contains 20,000 synthetic 64-d vectors. Demo data resets when the free server restarts. Persistence (WAL and snapshots) is tested separately in the repo.
       </div>
       <div class="header-links">
         <a href="/docs" target="_blank">&rarr; Interactive API Docs (/docs)</a>
@@ -379,7 +379,7 @@
           <span id="stat-query-cat" style="color: var(--text-main); font-weight: 500;">-</span>
         </div>
         <div class="stat-pill">
-          <span class="stat-label">Latency:</span>
+          <span class="stat-label">Engine latency (server-side):</span>
           <span id="stat-latency" style="color: var(--success); font-weight: 600;">- ms</span>
         </div>
         <div class="stat-pill">
@@ -450,7 +450,7 @@
     </div>
 
     <footer>
-      vsearch engine &bull; Single-process SIMD vector indexing &bull; Phase 12 Public Demo
+      vsearch engine &bull; Single-process SIMD vector indexing &bull; vsearch demo
     </footer>
   </div>
 

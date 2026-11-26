@@ -556,11 +556,11 @@ def test_assistant_endpoint():
             assert resp.status_code == 400
             assert "Context exceeds maximum allowed size" in resp.json()["detail"]
 
-            # 4. Successful assistant response with mocked Groq call
+            # 4. Successful assistant response with mocked Groq call (with backticks to strip and reasoning_effort)
             mock_groq_resp = {
                 "choices": [{
                     "message": {
-                        "content": "vsearch is an in-memory vector search engine implementing HNSW."
+                        "content": "```vsearch``` is an `in-memory` vector search engine implementing HNSW."
                     }
                 }]
             }
@@ -574,11 +574,33 @@ def test_assistant_endpoint():
                 )
                 assert resp.status_code == 200
                 assert resp.json()["answer"] == "vsearch is an in-memory vector search engine implementing HNSW."
+                call_json = mock_post.call_args[1]["json"]
+                assert call_json["reasoning_effort"] == "low"
+                assert call_json["max_tokens"] == 300
+                assert call_json["model"] == "openai/gpt-oss-20b"
                 call_headers = mock_post.call_args[1]["headers"]
                 assert call_headers["User-Agent"] == "vsearch-demo/1.0"
                 assert call_headers["Accept"] == "application/json"
                 assert call_headers["Content-Type"] == "application/json"
                 assert "Bearer" in call_headers["Authorization"]
+
+            # 4b. Empty content from Groq -> 502 with friendly message, warning logged (never question)
+            empty_content_resp = httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+            with patch("httpx.post", return_value=empty_content_resp), patch.object(api_app.logger, "warning") as mock_log:
+                resp = client.post("/assistant", json={"question": "Secret user question about empty?"}, headers=headers)
+                assert resp.status_code == 502
+                assert "Empty response from AI service" in resp.json()["detail"]
+                mock_log.assert_called()
+                log_args = str(mock_log.call_args)
+                assert "Empty content" in log_args
+                assert "Secret user question about empty?" not in log_args
+
+            # 4c. Content containing only backticks -> 502 with friendly message
+            backticks_only_resp = httpx.Response(200, json={"choices": [{"message": {"content": "```"}}]})
+            with patch("httpx.post", return_value=backticks_only_resp), patch.object(api_app.logger, "warning") as mock_log:
+                resp = client.post("/assistant", json={"question": "Question backticks only?"}, headers=headers)
+                assert resp.status_code == 502
+                assert "Empty response from AI service" in resp.json()["detail"]
 
             # 5. Per-IP Rate Limiting (5 requests per minute)
             api_app.assistant_ip_limiter.max_requests = 5
@@ -605,6 +627,81 @@ def test_assistant_endpoint():
                 )
                 assert r_diff.status_code == 200
 
+            # 5b. Spoofed X-Forwarded-For does NOT create a new bucket (uses last IP from trusted proxy)
+            api_app.assistant_ip_limiter.max_requests = 5
+            api_app.assistant_ip_limiter.window_seconds = 60.0
+            api_app.assistant_ip_limiter._requests.clear()
+            api_app.assistant_daily_tracker.reset()
+
+            with patch("httpx.post", return_value=mock_resp_200):
+                # 5 requests with spoofed initial IPs but same proxy-appended client IP (198.51.100.77)
+                for i in range(5):
+                    r = client.post(
+                        "/assistant",
+                        json={"question": f"Spoofed Q {i}?"},
+                        headers={"X-API-Key": "public-key-test", "X-Forwarded-For": f"10.0.0.{i}, 198.51.100.77"}
+                    )
+                    assert r.status_code == 200
+
+                # 6th request with a new spoofed initial IP but same proxy-appended client IP -> 429
+                r_spoof = client.post(
+                    "/assistant",
+                    json={"question": "Spoofed Q 6?"},
+                    headers={"X-API-Key": "public-key-test", "X-Forwarded-For": "10.0.0.99, 198.51.100.77"}
+                )
+                assert r_spoof.status_code == 429
+                assert "5 questions per minute" in r_spoof.json()["detail"]
+
+                # A different proxy-appended client IP succeeds
+                r_other = client.post(
+                    "/assistant",
+                    json={"question": "Legit Q from different IP?"},
+                    headers={"X-API-Key": "public-key-test", "X-Forwarded-For": "10.0.0.99, 198.51.100.88"}
+                )
+                assert r_other.status_code == 200
+
+            # 5c. Cloudflare / Render CF-Connecting-IP takes precedence over X-Forwarded-For
+            api_app.assistant_ip_limiter._requests.clear()
+            api_app.assistant_daily_tracker.reset()
+
+            with patch("httpx.post", return_value=mock_resp_200):
+                # 5 requests from CF-Connecting-IP 203.0.113.40 (even if X-Forwarded-For changes)
+                for i in range(5):
+                    r = client.post(
+                        "/assistant",
+                        json={"question": f"CF Q {i}?"},
+                        headers={
+                            "X-API-Key": "public-key-test",
+                            "CF-Connecting-IP": "203.0.113.40",
+                            "X-Forwarded-For": f"10.0.0.{i}, 198.51.100.99"
+                        }
+                    )
+                    assert r.status_code == 200
+
+                # 6th request from same CF-Connecting-IP gets 429
+                r_cf_limit = client.post(
+                    "/assistant",
+                    json={"question": "CF Q 6?"},
+                    headers={
+                        "X-API-Key": "public-key-test",
+                        "CF-Connecting-IP": "203.0.113.40",
+                        "X-Forwarded-For": "10.0.0.99, 198.51.100.99"
+                    }
+                )
+                assert r_cf_limit.status_code == 429
+
+                # Another client with different CF-Connecting-IP succeeds
+                r_cf_other = client.post(
+                    "/assistant",
+                    json={"question": "CF other client?"},
+                    headers={
+                        "X-API-Key": "public-key-test",
+                        "CF-Connecting-IP": "203.0.113.41",
+                        "X-Forwarded-For": "10.0.0.99, 198.51.100.99"
+                    }
+                )
+                assert r_cf_other.status_code == 200
+
             # 6. Global Daily Cap
             api_app.assistant_ip_limiter._requests.clear()
             api_app.assistant_daily_tracker.reset()
@@ -626,6 +723,17 @@ def test_assistant_endpoint():
             api_app.assistant_ip_limiter._requests.clear()
 
             # 7. Groq Errors Handling
+            # 7a-0. Groq returns 404 (model_not_found) -> 503
+            resp_404 = httpx.Response(404, text='{"error": {"message": "model_not_found: openai/gpt-oss-20b"}}')
+            with patch("httpx.post", return_value=resp_404), patch.object(api_app.logger, "warning") as mock_log:
+                r = client.post("/assistant", json={"question": "Groq 404 test?"}, headers=headers)
+                assert r.status_code == 503
+                assert "currently unavailable" in r.json()["detail"]
+                mock_log.assert_called()
+                log_args = str(mock_log.call_args)
+                assert "Groq model not found: check GROQ_MODEL" in log_args
+                assert "Groq 404 test?" not in log_args
+
             # 7a. Groq returns 401 (Unauthorized) -> 503
             resp_401 = httpx.Response(401, text='{"error": {"message": "Invalid API Key"}}')
             with patch("httpx.post", return_value=resp_401), patch.object(api_app.logger, "warning") as mock_log:
@@ -663,6 +771,7 @@ def test_assistant_endpoint():
                 assert "429" in log_args
 
             # 7d. Groq returns 500 (internal server error) -> 502
+            api_app.assistant_ip_limiter._requests.clear()
             resp_500 = httpx.Response(500, text='{"error": {"message": "Internal Server Error"}}')
             with patch("httpx.post", return_value=resp_500), patch.object(api_app.logger, "warning") as mock_log:
                 r = client.post("/assistant", json={"question": "Groq server error?"}, headers=headers)
@@ -673,6 +782,7 @@ def test_assistant_endpoint():
                 assert "500" in log_args
 
             # 7e. Groq Timeout -> 504
+            api_app.assistant_ip_limiter._requests.clear()
             with patch("httpx.post", side_effect=httpx.TimeoutException("Connection timed out")):
                 r = client.post("/assistant", json={"question": "Groq timeout?"}, headers=headers)
                 assert r.status_code == 504
@@ -686,6 +796,26 @@ def test_assistant_endpoint():
                 assert client.post("/assistant", json={"question": "Auth test"}, headers={"X-API-Key": "public-key-test"}).status_code == 200
                 # Invalid key rejected on /assistant
                 assert client.post("/assistant", json={"question": "Auth test"}, headers={"X-API-Key": "bad-key"}).status_code == 401
+
+            # 9. Startup Groq models check
+            # 9a. Model is present -> no warning
+            mock_models_resp = httpx.Response(200, json={"data": [{"id": "openai/gpt-oss-20b"}, {"id": "llama-3.1-8b-instant"}]})
+            with patch("httpx.get", return_value=mock_models_resp), patch.object(api_app.logger, "warning") as mock_log:
+                api_app.check_groq_models_at_startup()
+                mock_log.assert_not_called()
+
+            # 9b. Model is missing -> logs warning
+            mock_missing_models = httpx.Response(200, json={"data": [{"id": "some-other-model"}]})
+            with patch("httpx.get", return_value=mock_missing_models), patch.object(api_app.logger, "warning") as mock_log:
+                api_app.check_groq_models_at_startup()
+                mock_log.assert_called()
+                assert "is not in available Groq models list" in str(mock_log.call_args)
+
+            # 9c. Groq models check fails/times out -> logs warning, never raises
+            with patch("httpx.get", side_effect=httpx.TimeoutException("timeout")), patch.object(api_app.logger, "warning") as mock_log:
+                api_app.check_groq_models_at_startup()
+                mock_log.assert_called()
+                assert "Failed to check Groq models at startup" in str(mock_log.call_args)
 
             # Public key rejected on /search, /stats, /vectors
             assert client.get("/stats", headers={"X-API-Key": "public-key-test"}).status_code == 401

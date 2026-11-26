@@ -25,7 +25,7 @@ All runtime behavior is governed via environment variables.
 | `VSEARCH_SEED_ON_START` | `0` | `0`, `1` | If `1`, automatically generates and seeds ~20,000 clustered demo vectors on startup (ideal for ephemeral cloud tiers). |
 | `VSEARCH_SNAPSHOT_INTERVAL`| `300` (seconds) | Positive integer | Background periodic snapshot checkpoint interval in seconds. |
 | `GROQ_API_KEY` | `None` (disabled) | String | API key for Groq Cloud. Used by server-side `POST /assistant`. If omitted, assistant returns HTTP 503 and chat box is hidden. |
-| `GROQ_MODEL` | `llama-3.1-8b-instant` | String | Model identifier for Groq chat completions. |
+| `GROQ_MODEL` | `openai/gpt-oss-20b` | String | Model identifier for Groq chat completions. |
 | `ASSISTANT_DAILY_CAP` | `300` | Positive integer | Global daily query cap across all visitors for the AI assistant. Resets daily (UTC). |
 
 ---
