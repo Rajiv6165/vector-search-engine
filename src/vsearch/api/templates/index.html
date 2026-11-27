@@ -73,7 +73,65 @@
     }
 
     /* -------------------------------------------------------------------------
-       2. Subtle Grain Overlay (CSS Only)
+       2. Background Scene: CSS Glows, Faint Grid & Dynamic Canvas
+       ------------------------------------------------------------------------- */
+    .bg-scene {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .bg-glow-top {
+      position: absolute;
+      top: -260px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1200px;
+      height: 800px;
+      border-radius: 50%;
+      background: radial-gradient(ellipse at center, rgba(110, 140, 255, 0.10) 0%, rgba(110, 140, 255, 0) 70%);
+      pointer-events: none;
+    }
+
+    .bg-glow-br {
+      position: absolute;
+      bottom: -160px;
+      right: -160px;
+      width: 700px;
+      height: 700px;
+      border-radius: 50%;
+      background: radial-gradient(circle at center, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 70%);
+      pointer-events: none;
+    }
+
+    .bg-grid {
+      position: absolute;
+      inset: 0;
+      background-size: 64px 64px;
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.6) 35%, rgba(0, 0, 0, 0) 75%);
+      -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.6) 35%, rgba(0, 0, 0, 0) 75%);
+      pointer-events: none;
+    }
+
+    #bg {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    /* -------------------------------------------------------------------------
+       2b. Subtle Grain Overlay (CSS Only)
        ------------------------------------------------------------------------- */
     .grain-overlay {
       position: fixed;
@@ -420,6 +478,7 @@
     .section {
       padding: 96px 0;
       position: relative;
+      z-index: 10;
     }
 
     .section-header {
@@ -440,7 +499,9 @@
     }
 
     .demo-card {
-      background: var(--surface);
+      background: rgba(10, 10, 10, 0.72);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 28px;
@@ -633,7 +694,9 @@
     }
 
     .how-card {
-      background: var(--surface);
+      background: rgba(10, 10, 10, 0.72);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 28px 24px;
@@ -676,7 +739,9 @@
       width: 100%;
       border-collapse: collapse;
       font-size: 14px;
-      background: var(--surface);
+      background: rgba(10, 10, 10, 0.72);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--border);
       border-radius: 10px;
       overflow: hidden;
@@ -982,6 +1047,16 @@
 </head>
 
 <body style="background:#000;color:#fff">
+  <!-- Soft Static CSS Glows & Faint Grid -->
+  <div class="bg-scene" aria-hidden="true">
+    <div class="bg-glow-top"></div>
+    <div class="bg-glow-br"></div>
+    <div class="bg-grid"></div>
+  </div>
+
+  <!-- Fixed Full-Page Interactive Canvas Background -->
+  <canvas id="bg" aria-hidden="true"></canvas>
+
   <!-- Subtle Grain Texture -->
   <div class="grain-overlay" aria-hidden="true"></div>
 
@@ -1715,6 +1790,263 @@
           const q = sBtn.getAttribute("data-q");
           if (q) sendQuestion(q);
         });
+      });
+    })();
+
+    // -------------------------------------------------------------------------
+    // Full-Page Background Canvas Animation (Nearest-Neighbour Visualisation)
+    // -------------------------------------------------------------------------
+    (function initBackgroundCanvas() {
+      const canvas = document.getElementById("bg");
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      let width = window.innerWidth;
+      let height = window.innerHeight;
+      let dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+      function resizeCanvas() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.floor(width * dpr);
+        canvas.height = Math.floor(height * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+      resizeCanvas();
+
+      function getDotCount() {
+        return window.innerWidth <= 900 ? 45 : 90;
+      }
+
+      function createDot() {
+        const speed = 0.20 + Math.random() * 0.30;
+        const angle = Math.random() * Math.PI * 2;
+        return {
+          x: Math.random() * width,
+          y: Math.random() * height,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          r: 1.0 + Math.random() * 0.8, // radius 1.0 to 1.8
+          alpha: 0.25 + Math.random() * 0.25 // 25% to 50% opacity
+        };
+      }
+
+      let dots = [];
+      function initDots() {
+        const count = getDotCount();
+        dots = [];
+        for (let i = 0; i < count; i++) {
+          dots.push(createDot());
+        }
+      }
+      initDots();
+
+      // Debounced window resize
+      let resizeTimer;
+      window.addEventListener("resize", () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          resizeCanvas();
+          const targetCount = getDotCount();
+          if (dots.length < targetCount) {
+            while (dots.length < targetCount) dots.push(createDot());
+          } else if (dots.length > targetCount) {
+            dots.length = targetCount;
+          }
+          dots.forEach(d => {
+            if (d.x > width) d.x = Math.random() * width;
+            if (d.y > height) d.y = Math.random() * height;
+          });
+          if (prefersReducedMotion) {
+            drawFrame();
+          }
+        }, 150);
+      }, { passive: true });
+
+      // Interactive pointer tracking
+      const pointer = {
+        x: -1000,
+        y: -1000,
+        active: false,
+        isTouch: false
+      };
+
+      window.addEventListener("mousemove", (e) => {
+        if (window.innerWidth <= 900) return; // skip mouse interaction on mobile
+        pointer.x = e.clientX;
+        pointer.y = e.clientY;
+        pointer.active = true;
+        pointer.isTouch = false;
+      }, { passive: true });
+
+      window.addEventListener("mouseleave", () => {
+        pointer.active = false;
+      });
+
+      window.addEventListener("touchmove", (e) => {
+        if (e.touches && e.touches[0]) {
+          pointer.x = e.touches[0].clientX;
+          pointer.y = e.touches[0].clientY;
+          pointer.active = true;
+          pointer.isTouch = true;
+        }
+      }, { passive: true });
+
+      window.addEventListener("touchend", () => {
+        pointer.active = false;
+      });
+
+      window.addEventListener("touchcancel", () => {
+        pointer.active = false;
+      });
+
+      const MAX_NEIGHBOR_DIST = 150;
+      const POINTER_PULL_DIST = 140;
+      const POINTER_LINK_DIST = 200;
+
+      function drawFrame() {
+        ctx.clearRect(0, 0, width, height);
+
+        const pointerInteractive = pointer.active && (window.innerWidth > 900 || pointer.isTouch);
+
+        // 1. Update dot positions & pointer attraction
+        for (let i = 0; i < dots.length; i++) {
+          const d = dots[i];
+
+          // Gentle pull toward pointer within 140 px
+          if (pointerInteractive) {
+            const pdx = pointer.x - d.x;
+            const pdy = pointer.y - d.y;
+            const pdist = Math.sqrt(pdx * pdx + pdy * pdy);
+            if (pdist < POINTER_PULL_DIST && pdist > 0.5) {
+              const pull = (1 - pdist / POINTER_PULL_DIST) * 0.04;
+              d.x += pdx * pull;
+              d.y += pdy * pull;
+            }
+          }
+
+          // Drift
+          d.x += d.vx;
+          d.y += d.vy;
+
+          // Wrap at edges
+          if (d.x < -10) d.x = width + 10;
+          else if (d.x > width + 10) d.x = -10;
+          if (d.y < -10) d.y = height + 10;
+          else if (d.y > height + 10) d.y = -10;
+        }
+
+        // 2. Connect each dot to its 3 nearest neighbours within 150 px
+        const drawnPairs = new Set();
+
+        for (let i = 0; i < dots.length; i++) {
+          const di = dots[i];
+          const candidates = [];
+
+          for (let j = 0; j < dots.length; j++) {
+            if (i === j) continue;
+            const dj = dots[j];
+            const dx = dj.x - di.x;
+            const dy = dj.y - di.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < MAX_NEIGHBOR_DIST) {
+              candidates.push({ j, dist });
+            }
+          }
+
+          candidates.sort((a, b) => a.dist - b.dist);
+          const top3 = candidates.slice(0, 3);
+
+          for (let k = 0; k < top3.length; k++) {
+            const { j, dist } = top3[k];
+            const pairKey = i < j ? (i << 12) | j : (j << 12) | i;
+            if (drawnPairs.has(pairKey)) continue;
+            drawnPairs.add(pairKey);
+
+            const dj = dots[j];
+            const lineAlpha = 0.15 * (1 - dist / MAX_NEIGHBOR_DIST);
+            ctx.beginPath();
+            ctx.moveTo(di.x, di.y);
+            ctx.lineTo(dj.x, dj.y);
+            ctx.strokeStyle = `rgba(255, 255, 255, ${lineAlpha.toFixed(3)})`;
+            ctx.lineWidth = 0.75;
+            ctx.stroke();
+          }
+        }
+
+        // 3. Draw dots
+        for (let i = 0; i < dots.length; i++) {
+          const d = dots[i];
+          ctx.beginPath();
+          ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(255, 255, 255, ${d.alpha.toFixed(2)})`;
+          ctx.fill();
+        }
+
+        // 4. Pointer live query connections (4 nearest dots to pointer)
+        if (pointerInteractive) {
+          const pCandidates = [];
+          for (let i = 0; i < dots.length; i++) {
+            const d = dots[i];
+            const dx = d.x - pointer.x;
+            const dy = d.y - pointer.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < POINTER_LINK_DIST) {
+              pCandidates.push({ dot: d, dist });
+            }
+          }
+
+          pCandidates.sort((a, b) => a.dist - b.dist);
+          const top4 = pCandidates.slice(0, 4);
+
+          for (let k = 0; k < top4.length; k++) {
+            const { dot, dist } = top4[k];
+            const pAlpha = Math.min(0.35, 0.40 * (1 - dist / POINTER_LINK_DIST));
+            ctx.beginPath();
+            ctx.moveTo(pointer.x, pointer.y);
+            ctx.lineTo(dot.x, dot.y);
+            ctx.strokeStyle = `rgba(255, 255, 255, ${pAlpha.toFixed(3)})`;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+
+          // Small query point indicator at pointer
+          ctx.beginPath();
+          ctx.arc(pointer.x, pointer.y, 2.2, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
+          ctx.fill();
+        }
+      }
+
+      // Respect prefers-reduced-motion
+      const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      let animId = null;
+
+      function loop() {
+        drawFrame();
+        animId = requestAnimationFrame(loop);
+      }
+
+      if (prefersReducedMotion) {
+        drawFrame(); // Draw exactly one static frame
+      } else {
+        animId = requestAnimationFrame(loop);
+      }
+
+      // Pause when tab is hidden, resume when visible
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          if (animId) {
+            cancelAnimationFrame(animId);
+            animId = null;
+          }
+        } else {
+          if (!prefersReducedMotion && !animId) {
+            animId = requestAnimationFrame(loop);
+          }
+        }
       });
     })();
   </script>
