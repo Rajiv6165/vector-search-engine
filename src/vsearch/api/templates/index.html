@@ -5,36 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>vsearch — Vector Search Engine</title>
 
-  <!-- Google Fonts Fallback -->
+  <!-- Preload Critical Assets -->
+  <link rel="preload" href="/static/fonts/plus-jakarta-sans-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="https://d2ol7oe51mr4n9.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/82e7eb75-c65f-490a-99b5-f3d1cad54200.webp" as="image">
+
+  <!-- Fallback Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@1&family=Plus+Jakarta+Sans:wght@200..800&display=swap" rel="stylesheet">
+
+  <!-- Synchronous Entrance Setup -->
+  <script>
+    (function() {
+      var isReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (!isReduced) {
+        document.documentElement.classList.add('anim', 'js');
+      } else {
+        document.documentElement.classList.add('js');
+      }
+    })();
+  </script>
 
   <style>
     /* -------------------------------------------------------------------------
-       1. Core Reset & Design Tokens (Strict Pure Black System)
+       1. Core Reset & Typography
        ------------------------------------------------------------------------- */
-    html, body {
-      background: #000000 !important;
-      color: #ffffff;
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-      scroll-behavior: smooth;
-    }
-
-    *, *::before, *::after {
-      box-sizing: inherit;
-    }
-
     @font-face {
-      font-family: 'Inter';
+      font-family: 'PJS';
       font-style: normal;
-      font-weight: 100 900;
-      font-display: swap;
-      src: url('/static/fonts/inter-variable.woff2') format('woff2');
+      font-weight: 200 800;
+      font-display: block;
+      src: url('/static/fonts/plus-jakarta-sans-variable.woff2') format('woff2');
     }
 
     @font-face {
@@ -45,7 +46,26 @@
       src: url('/static/fonts/instrument-serif-italic.woff2') format('woff2');
     }
 
+    @font-face {
+      font-family: 'Inter';
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: swap;
+      src: url('/static/fonts/inter-variable.woff2') format('woff2');
+    }
+
     :root {
+      --u: min(calc(100vw / 1280), calc(100dvh / 760));
+      --ink: #ffffff;
+      --ink-muted: #ededed;
+      --panel: #181818;
+      --white-btn: #fdfdfd;
+      --btn-ink: #050505;
+      --glass-fill: rgba(0, 0, 0, 0.78);
+      --glass-line: rgba(255, 255, 255, 0.09);
+      --dx: 8.5;
+      --dy: 13.1;
+
       --bg: #000000;
       --text: #ffffff;
       --muted: #9a9a9a;
@@ -54,9 +74,36 @@
       --border-soft: rgba(255, 255, 255, 0.12);
       --surface: #0a0a0a;
       --surface-elevated: #111111;
-      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-sans: 'PJS', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       --font-serif: 'Instrument Serif', Georgia, serif;
       --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @supports not (height: 100dvh) {
+      :root {
+        --u: min(calc(100vw / 1280), calc(100vh / 760));
+      }
+    }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 80px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+    }
+
+    html, body {
+      background: #000000 !important;
+      color: #ffffff;
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
     body {
@@ -66,14 +113,33 @@
       position: relative;
     }
 
+    *, *::before, *::after {
+      box-sizing: inherit;
+    }
+
     /* Accessibility focus rings */
-    :focus-visible {
-      outline: 2px solid #ffffff;
+    a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible {
+      outline: 2px solid #a78bfa;
       outline-offset: 3px;
+      border-radius: 99px;
+    }
+
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 0 24px;
+      width: 100%;
+    }
+
+    .serif-accent {
+      font-family: var(--font-serif);
+      font-style: italic;
+      font-weight: 400;
+      color: #cfc6ff;
     }
 
     /* -------------------------------------------------------------------------
-       2. Background Scene: CSS Glows, Faint Grid & Dynamic Canvas
+       2. Background Scene & Atmospheric Glows (Fixed Behind Sections)
        ------------------------------------------------------------------------- */
     .bg-scene {
       position: fixed;
@@ -130,9 +196,6 @@
       pointer-events: none;
     }
 
-    /* -------------------------------------------------------------------------
-       2b. Subtle Grain Overlay (CSS Only)
-       ------------------------------------------------------------------------- */
     .grain-overlay {
       position: fixed;
       inset: 0;
@@ -145,26 +208,582 @@
     }
 
     /* -------------------------------------------------------------------------
-       3. Typography & Layout Containers
+       3. Video-Globe Hero Section (.hero only with var(--u))
        ------------------------------------------------------------------------- */
-    .serif-accent {
+    .hero {
+      position: relative;
+      width: 100%;
+      height: 100dvh;
+      min-height: 560px;
+      overflow: hidden;
+      background: #000000;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+    }
+
+    @supports not (height: 100dvh) {
+      .hero {
+        height: 100vh;
+      }
+    }
+
+    /* Video Background Wrapper */
+    .hero .bg {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: max(100vw, calc(100dvh * 1.6));
+      height: max(62.5vw, 100dvh);
+      pointer-events: none;
+      z-index: 1;
+      overflow: hidden;
+    }
+
+    @supports not (height: 100dvh) {
+      .hero .bg {
+        width: max(100vw, calc(100vh * 1.6));
+        height: max(62.5vw, 100vh);
+      }
+    }
+
+    .bg-poster {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: 51% 8%;
+      opacity: 1;
+    }
+
+    .bg-video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: 51% 8%;
+      opacity: 0;
+      transition: opacity 0.9s linear;
+      pointer-events: none;
+    }
+
+    .bg-video.is-active {
+      opacity: 1;
+    }
+
+    .hero-canvas-fallback {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+      pointer-events: none;
+    }
+
+    .hero-canvas-fallback.is-active {
+      opacity: 1;
+    }
+
+    .hero-bottom-fade {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 22%;
+      background: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0%, #000000 100%);
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    /* Hero Navigation */
+    .hero-nav {
+      position: relative;
+      z-index: 10;
+      width: 100%;
+      height: calc(67 * var(--u));
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 calc(40 * var(--u));
+    }
+
+    .hero-logo {
+      font-weight: 800;
+      font-size: calc(26 * var(--u));
+      color: #ffffff;
+      text-decoration: none;
+      letter-spacing: -0.04em;
+      display: inline-flex;
+      align-items: center;
+      gap: calc(8 * var(--u));
+    }
+
+    .hero-logo svg {
+      width: calc(22 * var(--u));
+      height: calc(22 * var(--u));
+    }
+
+    .hero-nav-links {
+      display: inline-flex;
+      align-items: center;
+      gap: calc(28 * var(--u));
+    }
+
+    .hero-nav-link {
+      font-size: calc(11.5 * var(--u));
+      font-weight: 500;
+      color: #ededed;
+      text-decoration: none;
+      transition: color 0.2s ease;
+    }
+
+    .hero-nav-link:hover {
+      color: #ffffff;
+    }
+
+    .hero-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: calc(10 * var(--u));
+    }
+
+    .hero-btn-ghost {
+      height: calc(28 * var(--u));
+      padding: 0 calc(14 * var(--u));
+      font-size: calc(11.5 * var(--u));
+      font-weight: 500;
+      border-radius: 99px;
+      border: 1px solid var(--glass-line);
+      background: var(--glass-fill);
+      color: #ffffff;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: background 0.2s ease, border-color 0.2s ease;
+    }
+
+    .hero-btn-ghost:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+
+    .hero-btn-solid {
+      height: calc(28 * var(--u));
+      padding: 0 calc(14 * var(--u));
+      font-size: calc(11.5 * var(--u));
+      font-weight: 500;
+      border-radius: 99px;
+      background: var(--white-btn);
+      color: var(--btn-ink);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: calc(5 * var(--u));
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .hero-btn-solid:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(255, 255, 255, 0.2);
+    }
+
+    .hero-burger {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 99px;
+      background: var(--glass-fill);
+      border: 1px solid var(--glass-line);
+      color: #ffffff;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 0;
+    }
+
+    /* Burger Dropdown Panel */
+    .hero-dropdown {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 24px;
+      width: 220px;
+      background: rgba(18, 18, 18, 0.92);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-line);
+      border-radius: 14px;
+      padding: 16px;
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 100;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8);
+    }
+
+    .hero-dropdown.is-open {
+      display: flex;
+    }
+
+    .hero-dropdown-link {
+      font-size: 14px;
+      font-weight: 500;
+      color: #ededed;
+      text-decoration: none;
+      padding: 6px 0;
+      transition: color 0.2s ease;
+    }
+
+    .hero-dropdown-link:hover {
+      color: #ffffff;
+    }
+
+    .hero-dropdown-btn {
+      height: 40px;
+      border-radius: 99px;
+      background: var(--white-btn);
+      color: var(--btn-ink);
+      font-size: 13.5px;
+      font-weight: 600;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    /* Hero Center Content Block */
+    .hero-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      position: relative;
+      z-index: 4;
+      transform: translate(calc(var(--dx) * var(--u)), calc(var(--dy) * var(--u)));
+      padding: 0 20px;
+    }
+
+    .hero-scrim {
+      position: absolute;
+      inset: calc(-30 * var(--u)) calc(-50 * var(--u));
+      background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0) 70%);
+      pointer-events: none;
+      z-index: -1;
+      border-radius: 40px;
+    }
+
+    .hero-h1 {
+      margin: 0;
+      font-weight: 500;
+      font-size: calc(89 * var(--u));
+      line-height: calc(90 * var(--u));
+      letter-spacing: calc(-1 * var(--u));
+      color: var(--ink);
+    }
+
+    .hero-h1-mask {
+      display: block;
+      overflow: hidden;
+    }
+
+    .hero-h1-line {
+      display: block;
+    }
+
+    .hero-h1 em {
       font-family: var(--font-serif);
       font-style: italic;
       font-weight: 400;
-      color: #9a9a9a;
-      letter-spacing: 0;
+      font-size: 1.08em;
+      color: #cfc6ff;
     }
 
-    .container {
-      max-width: 860px;
-      margin: 0 auto;
-      padding: 0 24px;
-      width: 100%;
+    .hero-sub {
+      margin: calc(20 * var(--u)) 0 calc(28 * var(--u)) 0;
+      font-weight: 300;
+      font-size: calc(17.4 * var(--u));
+      line-height: calc(27 * var(--u));
+      color: #f6f6f6;
+    }
+
+    .hero-ctas {
+      display: inline-flex;
+      align-items: center;
+      gap: calc(7 * var(--u));
+    }
+
+    .btn-hero-primary {
+      height: calc(39 * var(--u));
+      padding: 0 calc(22 * var(--u));
+      font-size: calc(13 * var(--u));
+      font-weight: 500;
+      border-radius: 99px;
+      background: var(--white-btn);
+      color: var(--btn-ink);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: calc(6 * var(--u));
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      box-shadow: 0 4px 16px rgba(255, 255, 255, 0.15);
+    }
+
+    .btn-hero-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(255, 255, 255, 0.25);
+    }
+
+    .btn-hero-ghost {
+      height: calc(39 * var(--u));
+      padding: 0 calc(20 * var(--u));
+      font-size: calc(13 * var(--u));
+      font-weight: 500;
+      border-radius: 99px;
+      background: var(--glass-fill);
+      border: 1px solid var(--glass-line);
+      color: var(--ink);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: calc(8 * var(--u));
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    }
+
+    .btn-hero-ghost:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.25);
+      transform: translateY(-1px);
     }
 
     /* -------------------------------------------------------------------------
-       4. Buttons & Interactive Liquid Metal Pills
+       4. Entrance Sequence Animations (HTML.anim / HTML.go)
        ------------------------------------------------------------------------- */
+    html.anim .hero-line-1 { transform: translateY(115%); }
+    html.anim .hero-line-2 { transform: translateY(115%); }
+    html.anim .hero-logo { opacity: 0; }
+    html.anim .hero-nav-item { opacity: 0; }
+    html.anim .hero-sub { opacity: 0; transform: translateY(14px); filter: blur(4px); }
+    html.anim .hero-actions { opacity: 0; }
+    html.anim .btn-hero-primary { opacity: 0; transform: translateY(12px); }
+    html.anim .btn-hero-ghost { opacity: 0; transform: translateY(12px); }
+
+    html.anim.go .hero-line-1 {
+      animation: heroRise 1.05s cubic-bezier(.16, 1, .3, 1) 0.12s forwards;
+    }
+    html.anim.go .hero-line-2 {
+      animation: heroRise 1.05s cubic-bezier(.16, 1, .3, 1) 0.22s forwards;
+    }
+    html.anim.go .hero-logo {
+      animation: heroFade 0.6s ease 0.46s forwards;
+    }
+    html.anim.go .hero-item-1 { animation: heroFade 0.5s ease 0.540s forwards; }
+    html.anim.go .hero-item-2 { animation: heroFade 0.5s ease 0.585s forwards; }
+    html.anim.go .hero-item-3 { animation: heroFade 0.5s ease 0.630s forwards; }
+    html.anim.go .hero-item-4 { animation: heroFade 0.5s ease 0.675s forwards; }
+    html.anim.go .hero-sub {
+      animation: heroSub 0.9s cubic-bezier(.16, 1, .3, 1) 0.58s forwards;
+    }
+    html.anim.go .hero-actions {
+      animation: heroFade 0.5s ease 0.68s forwards;
+    }
+    html.anim.go .btn-hero-primary {
+      animation: heroRiseCta 0.7s cubic-bezier(.16, 1, .3, 1) 0.90s forwards;
+    }
+    html.anim.go .btn-hero-ghost {
+      animation: heroRiseCta 0.7s cubic-bezier(.16, 1, .3, 1) 0.97s forwards;
+    }
+
+    @keyframes heroRise {
+      from { transform: translateY(115%); }
+      to { transform: translateY(0); }
+    }
+
+    @keyframes heroFade {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes heroSub {
+      from { opacity: 0; transform: translateY(14px); filter: blur(4px); }
+      to { opacity: 1; transform: translateY(0); filter: blur(0); }
+    }
+
+    @keyframes heroRiseCta {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* -------------------------------------------------------------------------
+       5. Hero Responsive Breakpoints
+       ------------------------------------------------------------------------- */
+    @media (max-width: 1160px) {
+      .hero-nav-links { display: none; }
+      .hero-burger { display: inline-flex; }
+      .hero-body { transform: none; }
+      .btn-hero-primary, .btn-hero-ghost { min-height: 44px; }
+      .hero-sub { font-size: 16px; line-height: 25px; }
+      .hero-actions .hero-btn-ghost, .hero-actions .hero-btn-solid { display: none; }
+    }
+
+    @media (max-width: 552px) {
+      :root { --u: 1px; }
+      .hero-h1 {
+        font-size: min(74px, calc((100vw - 44px) / 6.9));
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+      }
+      .hero-sub {
+        font-size: 15px;
+        line-height: 22px;
+        max-width: 42ch;
+      }
+      .desktop-br { display: none; }
+      .hero-ctas {
+        flex-wrap: wrap;
+        justify-content: center;
+        width: 100%;
+      }
+      .btn-hero-primary, .btn-hero-ghost {
+        min-height: 44px;
+        padding: 0 20px;
+        font-size: 14px;
+      }
+      html.anim .hero-sub { filter: none; }
+    }
+
+    @media (max-width: 353px) {
+      .hero-ctas {
+        flex-direction: column;
+        width: 100%;
+      }
+      .btn-hero-primary, .btn-hero-ghost {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+
+    @media (max-width: 552px) and (max-height: 460px) {
+      .hero-h1 {
+        font-size: 32px;
+        line-height: 36px;
+      }
+      .hero-sub {
+        font-size: 13px;
+        line-height: 18px;
+        margin: 10px 0 14px 0;
+      }
+    }
+
+    /* -------------------------------------------------------------------------
+       6. Sections Below Hero (Fluid System)
+       ------------------------------------------------------------------------- */
+    .section {
+      padding: 96px 0;
+      position: relative;
+      z-index: 10;
+    }
+
+    .section-header {
+      margin-bottom: 40px;
+    }
+
+    .section-title {
+      font-size: 32px;
+      font-weight: 600;
+      letter-spacing: -0.035em;
+      margin: 0 0 10px 0;
+      color: #ffffff;
+    }
+
+    .section-subtitle {
+      font-size: 15px;
+      color: var(--muted);
+      margin: 0;
+      line-height: 1.5;
+    }
+
+    /* Section Scroll Transitions */
+    html.js .section-fade {
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity 0.5s ease, transform 0.5s ease;
+    }
+
+    html.js .section-fade.is-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html.js .section-fade {
+        opacity: 1 !important;
+        transform: none !important;
+        transition: none !important;
+      }
+      * {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+
+    /* Stats Band */
+    .stats-section {
+      padding: 48px 0;
+      position: relative;
+      z-index: 10;
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 32px;
+      text-align: center;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .stat-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: -0.03em;
+    }
+
+    .stat-desc {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    @media (max-width: 768px) {
+      .stats-grid {
+        grid-template-columns: 1fr;
+        gap: 24px;
+      }
+    }
+
+    /* Standard Interactive Button */
     .btn {
       display: inline-flex;
       align-items: center;
@@ -183,11 +802,6 @@
       overflow: hidden;
     }
 
-    .btn-hero {
-      height: 42px;
-      padding: 0 24px;
-    }
-
     .btn-solid {
       background: linear-gradient(180deg, #ffffff 0%, #d8d8d8 100%);
       color: #111111;
@@ -195,309 +809,12 @@
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
     }
 
-    .btn-solid::after {
-      content: "";
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
-      transform: translateX(-130%) skewX(-20deg);
-      transition: transform 0.6s var(--ease-out-expo);
-    }
-
     .btn-solid:hover {
       box-shadow: 0 0 22px rgba(200, 225, 255, 0.45), 0 2px 10px rgba(0, 0, 0, 0.6);
       transform: translateY(-1px);
     }
 
-    .btn-solid:hover::after {
-      transform: translateX(130%) skewX(-20deg);
-    }
-
-    .btn-ghost {
-      background: rgba(255, 255, 255, 0.06);
-      color: #ffffff;
-      border: 1px solid rgba(255, 255, 255, 0.22);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-    }
-
-    .btn-ghost:hover {
-      background: rgba(255, 255, 255, 0.12);
-      border-color: rgba(255, 255, 255, 0.4);
-      transform: translateY(-1px);
-    }
-
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      transform: none !important;
-    }
-
-    /* Liquid-metal nav pills */
-    .nav-pill {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      height: 40px;
-      padding: 0 18px;
-      font-size: 14px;
-      font-weight: 500;
-      color: #ffffff;
-      border-radius: 7px;
-      border: 1px solid rgba(198, 198, 198, 0.55);
-      background: linear-gradient(105deg, #050505 0%, #2a2a2a 48%, #4a4a4a 100%);
-      text-decoration: none;
-      position: relative;
-      overflow: hidden;
-      transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.2s ease;
-    }
-
-    .nav-pill::after {
-      content: "";
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
-      transform: translateX(-120%) skewX(-20deg);
-      transition: transform 0.6s var(--ease-out-expo);
-    }
-
-    .nav-pill:hover {
-      border-color: rgba(255, 255, 255, 0.85);
-      box-shadow: 0 0 16px rgba(255, 255, 255, 0.18);
-      transform: translateY(-1px);
-    }
-
-    .nav-pill:hover::after {
-      transform: translateX(120%) skewX(-20deg);
-    }
-
-    /* -------------------------------------------------------------------------
-       5. Header (3-Column Grid)
-       ------------------------------------------------------------------------- */
-    .site-header {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      z-index: 50;
-      padding: 22px 40px;
-      background: rgba(0, 0, 0, 0.8);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border-bottom: 1px solid var(--border-soft);
-    }
-
-    .header-grid {
-      display: grid;
-      grid-template-columns: 1fr auto 1fr;
-      align-items: center;
-      max-width: 1400px;
-      margin: 0 auto;
-    }
-
-    .header-logo {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      color: #ffffff;
-      text-decoration: none;
-      font-size: 17px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-    }
-
-    .header-logo-suffix {
-      font-weight: 400;
-      color: var(--muted);
-      font-size: 13px;
-      margin-left: -4px;
-    }
-
-    .header-nav {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .header-cta {
-      display: flex;
-      justify-content: flex-end;
-    }
-
-    .burger-btn {
-      display: none;
-      background: transparent;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      color: #fff;
-      padding: 8px 10px;
-      cursor: pointer;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .mobile-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.95);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
-      z-index: 60;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 20px;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.3s ease;
-    }
-
-    .mobile-overlay.active {
-      display: flex;
-      opacity: 1;
-      pointer-events: auto;
-    }
-
-    .mobile-overlay .nav-pill {
-      width: 240px;
-      height: 48px;
-      font-size: 16px;
-    }
-
-    .mobile-close-btn {
-      position: absolute;
-      top: 24px;
-      right: 28px;
-      background: transparent;
-      border: none;
-      color: #fff;
-      font-size: 28px;
-      cursor: pointer;
-      line-height: 1;
-    }
-
-    /* -------------------------------------------------------------------------
-       6. Hero Section (100dvh, Bottom-Centered Content)
-       ------------------------------------------------------------------------- */
-    .hero-section {
-      min-height: 100dvh;
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-end;
-      align-items: center;
-      padding-top: 120px;
-      padding-bottom: 48px;
-      text-align: center;
-      position: relative;
-    }
-
-    .hero-badge {
-      font-size: 12.5px;
-      font-weight: 500;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--muted);
-      border: 1px solid var(--border);
-      padding: 6px 14px;
-      border-radius: 20px;
-      margin-bottom: 24px;
-      background: rgba(255, 255, 255, 0.03);
-    }
-
-    .hero-title {
-      font-size: 48px;
-      font-weight: 500;
-      line-height: 1.12;
-      letter-spacing: -0.045em;
-      margin: 0 0 20px 0;
-      max-width: 860px;
-    }
-
-    .hero-line {
-      display: block;
-    }
-
-    .hero-lede {
-      font-size: 15.5px;
-      line-height: 1.55;
-      color: var(--muted);
-      max-width: 470px;
-      margin: 0 auto 32px auto;
-    }
-
-    .hero-buttons {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 14px;
-      margin-bottom: 56px;
-    }
-
-    .hero-stats {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 28px;
-      width: 100%;
-      max-width: 860px;
-      border-top: 1px solid var(--border-soft);
-      padding-top: 32px;
-      margin: 0 auto;
-    }
-
-    .stat-item {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .stat-value {
-      font-size: 19px;
-      font-weight: 600;
-      color: var(--stat);
-      letter-spacing: -0.02em;
-    }
-
-    .stat-desc {
-      font-size: 12.5px;
-      color: var(--muted);
-      max-width: 240px;
-      line-height: 1.35;
-    }
-
-    /* -------------------------------------------------------------------------
-       7. Interactive Demo Section (#demo)
-       ------------------------------------------------------------------------- */
-    .section {
-      padding: 96px 0;
-      position: relative;
-      z-index: 10;
-    }
-
-    .section-header {
-      margin-bottom: 40px;
-    }
-
-    .section-title {
-      font-size: 32px;
-      font-weight: 500;
-      letter-spacing: -0.035em;
-      margin: 0 0 10px 0;
-    }
-
-    .section-subtitle {
-      font-size: 15px;
-      color: var(--muted);
-      margin: 0;
-    }
-
+    /* Demo Card & Controls */
     .demo-card {
       background: rgba(10, 10, 10, 0.72);
       backdrop-filter: blur(12px);
@@ -519,51 +836,80 @@
     .field-group {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
     }
 
     .field-label {
       font-size: 12px;
-      font-weight: 600;
-      letter-spacing: 0.05em;
       text-transform: uppercase;
+      letter-spacing: 0.05em;
       color: var(--muted);
+      font-weight: 600;
     }
 
     .select-input, .num-input {
       height: 40px;
-      background: #000000;
+      background: rgba(255, 255, 255, 0.05);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 0 14px;
       color: #ffffff;
+      padding: 0 14px;
       font-size: 14px;
       font-family: inherit;
       outline: none;
-      transition: border-color 0.2s ease;
+      transition: border-color 0.2s ease, background 0.2s ease;
+    }
+
+    .select-input option {
+      background: #111111;
+      color: #ffffff;
     }
 
     .select-input:focus, .num-input:focus {
-      border-color: rgba(255, 255, 255, 0.6);
+      border-color: #a78bfa;
+      background: rgba(255, 255, 255, 0.08);
     }
 
+    .demo-alert {
+      display: none;
+      padding: 12px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 20px;
+      line-height: 1.4;
+    }
+
+    .demo-alert-warning {
+      background: rgba(234, 179, 8, 0.12);
+      border: 1px solid rgba(234, 179, 8, 0.35);
+      color: #fef08a;
+    }
+
+    .demo-alert-danger {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: #fca5a5;
+    }
+
+    /* Telemetry Row */
     .telemetry-row {
       display: flex;
-      flex-wrap: wrap;
       align-items: center;
-      gap: 20px;
-      padding: 16px 20px;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding: 12px 18px;
       background: rgba(255, 255, 255, 0.03);
       border: 1px solid var(--border-soft);
-      border-radius: 8px;
-      margin-bottom: 24px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      margin-bottom: 20px;
+      color: var(--stat);
     }
 
     .telemetry-item {
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: 8px;
-      font-size: 13.5px;
+      gap: 6px;
     }
 
     .telemetry-label {
@@ -573,13 +919,13 @@
     .telemetry-val {
       font-weight: 600;
       color: #ffffff;
+      font-variant-numeric: tabular-nums;
     }
 
     .badge-path {
-      display: inline-block;
-      padding: 3px 8px;
-      border-radius: 4px;
-      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 11px;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.03em;
@@ -588,15 +934,16 @@
     .badge-graph {
       background: rgba(52, 211, 153, 0.15);
       color: #34d399;
-      border: 1px solid rgba(52, 211, 153, 0.35);
+      border: 1px solid rgba(52, 211, 153, 0.3);
     }
 
     .badge-fallback {
       background: rgba(251, 191, 36, 0.15);
       color: #fbbf24;
-      border: 1px solid rgba(251, 191, 36, 0.35);
+      border: 1px solid rgba(251, 191, 36, 0.3);
     }
 
+    /* Results Table */
     .table-wrapper {
       overflow-x: auto;
       border: 1px solid var(--border-soft);
@@ -606,82 +953,191 @@
     .demo-table {
       width: 100%;
       border-collapse: collapse;
-      text-align: left;
       font-size: 13.5px;
+      background: rgba(10, 10, 10, 0.4);
     }
 
-    .demo-table th {
+    .demo-table th, .demo-table td {
       padding: 12px 16px;
-      background: rgba(255, 255, 255, 0.04);
-      color: var(--muted);
-      font-weight: 500;
+      text-align: left;
       border-bottom: 1px solid var(--border-soft);
     }
 
-    .demo-table td {
-      padding: 12px 16px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-      color: #ffffff;
+    .demo-table th {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
 
     .demo-table tr:last-child td {
       border-bottom: none;
     }
 
-    .demo-table tr:hover td {
-      background: rgba(255, 255, 255, 0.02);
-    }
-
-    .badge-category {
-      display: inline-block;
-      padding: 2px 8px;
-      background: rgba(255, 255, 255, 0.08);
-      border-radius: 4px;
-      font-size: 12px;
-      color: var(--stat);
-    }
-
-    .dist-tag {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      color: #93c5fd;
+    .demo-table td {
+      color: #eaeaea;
+      font-variant-numeric: tabular-nums;
     }
 
     .query-tag {
       display: inline-block;
       padding: 2px 6px;
-      background: rgba(147, 197, 253, 0.15);
-      color: #93c5fd;
-      border-radius: 4px;
-      font-size: 11px;
+      font-size: 10.5px;
       font-weight: 600;
       text-transform: uppercase;
-    }
-
-    .demo-alert {
-      padding: 12px 16px;
-      border-radius: 6px;
-      font-size: 13.5px;
-      margin-bottom: 20px;
-      display: none;
-    }
-
-    .demo-alert-warning {
-      background: rgba(251, 191, 36, 0.1);
-      border: 1px solid rgba(251, 191, 36, 0.3);
-      color: #fef08a;
-    }
-
-    .demo-alert-danger {
-      background: rgba(248, 113, 113, 0.1);
-      border: 1px solid rgba(248, 113, 113, 0.3);
-      color: #fca5a5;
+      background: rgba(167, 139, 250, 0.2);
+      color: #c4b5fd;
+      border: 1px solid rgba(167, 139, 250, 0.4);
+      border-radius: 4px;
     }
 
     .demo-note {
-      font-size: 13px;
+      font-size: 12.5px;
       color: var(--muted);
-      margin-top: 18px;
-      text-align: center;
+      margin: 16px 0 0 0;
+      line-height: 1.4;
+    }
+
+    @media (max-width: 768px) {
+      .demo-controls {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* -------------------------------------------------------------------------
+       7. Compare Section (#compare)
+       ------------------------------------------------------------------------- */
+    .compare-card {
+      background: rgba(10, 10, 10, 0.72);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    .compare-presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .compare-preset-btn {
+      height: 38px;
+      padding: 0 16px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+      font-family: inherit;
+      font-size: 13.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .compare-preset-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .compare-preset-btn.is-active {
+      background: var(--white-btn);
+      color: var(--btn-ink);
+      border-color: var(--white-btn);
+      font-weight: 600;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+    }
+
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    .compare-col {
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.02);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .compare-col-header {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    .compare-col-badge {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-kw {
+      color: #94a3b8;
+    }
+
+    .badge-vec {
+      color: #a78bfa;
+    }
+
+    .compare-col-sub {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .compare-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex: 1;
+    }
+
+    .compare-item {
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13.5px;
+      line-height: 1.4;
+    }
+
+    .item-kw {
+      background: rgba(255, 255, 255, 0.03);
+      color: #cbd5e1;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .item-vec {
+      background: rgba(167, 139, 250, 0.08);
+      color: #ffffff;
+      border: 1px solid rgba(167, 139, 250, 0.25);
+      font-weight: 500;
+    }
+
+    .compare-caption {
+      font-size: 12.5px;
+      color: var(--muted);
+      margin-top: 20px;
+    }
+
+    @media (max-width: 680px) {
+      .compare-grid {
+        grid-template-columns: 1fr;
+      }
     }
 
     /* -------------------------------------------------------------------------
@@ -732,6 +1188,12 @@
       margin: 0;
     }
 
+    @media (max-width: 900px) {
+      .how-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     /* -------------------------------------------------------------------------
        9. Benchmarks Section (#benchmarks)
        ------------------------------------------------------------------------- */
@@ -768,26 +1230,109 @@
       font-size: 12.5px;
       color: var(--muted);
       margin-top: 14px;
-      text-align: right;
     }
 
     /* -------------------------------------------------------------------------
-       10. Floating Assistant Widget
+       10. Try the API Section (#api)
+       ------------------------------------------------------------------------- */
+    .api-card {
+      background: rgba(10, 10, 10, 0.72);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    .api-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .api-endpoint-badge {
+      font-family: monospace;
+      font-size: 13px;
+      font-weight: 600;
+      color: #c4b5fd;
+      background: rgba(167, 139, 250, 0.12);
+      border: 1px solid rgba(167, 139, 250, 0.3);
+      padding: 4px 10px;
+      border-radius: 6px;
+    }
+
+    .btn-copy {
+      height: 32px;
+      padding: 0 12px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border);
+      color: #ffffff;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-copy:hover {
+      background: rgba(255, 255, 255, 0.16);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .api-code {
+      margin: 0;
+      padding: 16px;
+      background: rgba(0, 0, 0, 0.6);
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      font-family: Consolas, Monaco, "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #f1f5f9;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+
+    .api-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 12px;
+      font-size: 12.5px;
+    }
+
+    .api-note {
+      color: var(--muted);
+    }
+
+    .copy-status {
+      color: #34d399;
+      font-weight: 600;
+    }
+
+    /* -------------------------------------------------------------------------
+       11. Assistant Widget (Floating Bottom-Right)
        ------------------------------------------------------------------------- */
     .assistant-toggle-btn {
       position: fixed;
-      bottom: 28px;
-      right: 28px;
-      z-index: 90;
+      bottom: 24px;
+      right: 24px;
+      z-index: 1000;
       height: 44px;
       padding: 0 18px;
-      border-radius: 22px;
-      background: linear-gradient(180deg, #ffffff 0%, #d8d8d8 100%);
-      color: #111111;
+      border-radius: 99px;
+      background: var(--white-btn);
+      color: var(--btn-ink);
+      border: none;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 16px rgba(255, 255, 255, 0.2);
       font-size: 13.5px;
       font-weight: 600;
-      border: 1px solid rgba(255, 255, 255, 0.4);
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 15px rgba(255, 255, 255, 0.15);
       cursor: pointer;
       display: inline-flex;
       align-items: center;
@@ -797,24 +1342,27 @@
 
     .assistant-toggle-btn:hover {
       transform: translateY(-2px);
-      box-shadow: 0 6px 24px rgba(200, 225, 255, 0.35);
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6), 0 0 22px rgba(255, 255, 255, 0.35);
     }
 
     .assistant-card {
       position: fixed;
-      bottom: 84px;
-      right: 28px;
-      width: 380px;
-      max-width: calc(100vw - 36px);
-      background: #0d0d0d;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
-      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.85);
-      z-index: 95;
+      bottom: 80px;
+      right: 24px;
+      z-index: 1001;
       display: none;
       flex-direction: column;
-      gap: 14px;
+      width: 360px;
+      max-width: calc(100vw - 48px);
+      height: 480px;
+      max-height: calc(100vh - 120px);
+      background: rgba(14, 14, 14, 0.94);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8);
+      overflow: hidden;
     }
 
     .assistant-card.active {
@@ -823,17 +1371,21 @@
 
     .assistant-header {
       display: flex;
-      justify-content: space-between;
       align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-soft);
+      background: rgba(255, 255, 255, 0.02);
     }
 
     .assistant-title {
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 600;
+      margin: 0;
+      color: #ffffff;
       display: flex;
       align-items: center;
-      gap: 6px;
-      margin: 0;
+      gap: 8px;
     }
 
     .assistant-close {
@@ -841,26 +1393,61 @@
       border: none;
       color: var(--muted);
       font-size: 20px;
-      cursor: pointer;
       line-height: 1;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .assistant-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      font-size: 13px;
+    }
+
+    .chat-bubble {
+      padding: 10px 14px;
+      border-radius: 10px;
+      max-width: 85%;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+
+    .chat-user {
+      align-self: flex-end;
+      background: rgba(167, 139, 250, 0.2);
+      color: #ffffff;
+      border: 1px solid rgba(167, 139, 250, 0.4);
+    }
+
+    .chat-assistant {
+      align-self: flex-start;
+      background: rgba(255, 255, 255, 0.06);
+      color: #eaeaea;
+      border: 1px solid var(--border-soft);
     }
 
     .assistant-suggestions {
       display: flex;
-      flex-direction: column;
+      flex-wrap: wrap;
       gap: 6px;
+      padding: 8px 16px;
+      border-top: 1px solid var(--border-soft);
+      background: rgba(0, 0, 0, 0.3);
     }
 
     .btn-suggestion {
+      font-size: 11.5px;
+      padding: 5px 10px;
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid var(--border-soft);
-      color: #d1d5db;
-      font-size: 12px;
-      padding: 6px 10px;
-      border-radius: 6px;
-      text-align: left;
+      border-radius: 99px;
+      color: var(--muted);
       cursor: pointer;
-      transition: all 0.15s ease;
+      transition: all 0.2s ease;
     }
 
     .btn-suggestion:hover {
@@ -868,276 +1455,222 @@
       color: #ffffff;
     }
 
-    .assistant-messages {
-      max-height: 220px;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      padding-right: 4px;
-    }
-
-    .chat-bubble {
-      padding: 8px 12px;
-      border-radius: 8px;
-      font-size: 13px;
-      line-height: 1.45;
-      word-break: break-word;
-      max-width: 90%;
-    }
-
-    .chat-user {
-      align-self: flex-end;
-      background: rgba(255, 255, 255, 0.15);
-      color: #ffffff;
-      border: 1px solid rgba(255, 255, 255, 0.25);
-    }
-
-    .chat-assistant {
-      align-self: flex-start;
-      background: rgba(255, 255, 255, 0.04);
-      color: #e5e7eb;
-      border: 1px solid var(--border-soft);
-    }
-
     .assistant-form {
       display: flex;
+      padding: 12px 16px;
       gap: 8px;
+      border-top: 1px solid var(--border-soft);
+      background: rgba(0, 0, 0, 0.4);
     }
 
     .assistant-input {
       flex: 1;
       height: 36px;
-      background: #000000;
+      background: rgba(255, 255, 255, 0.06);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 0 10px;
       color: #ffffff;
+      padding: 0 12px;
       font-size: 13px;
       outline: none;
     }
 
     .assistant-input:focus {
-      border-color: rgba(255, 255, 255, 0.6);
+      border-color: #a78bfa;
     }
 
-    .assistant-send {
+    .assistant-send-btn {
       height: 36px;
       padding: 0 14px;
+      background: var(--white-btn);
+      color: var(--btn-ink);
+      border: none;
+      border-radius: 6px;
       font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
     }
 
-    .assistant-meta {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    .assistant-footer-note {
       font-size: 11px;
-      color: #64748b;
+      color: var(--muted);
+      text-align: center;
+      padding: 4px 16px 8px 16px;
+      background: rgba(0, 0, 0, 0.4);
     }
 
     /* -------------------------------------------------------------------------
-       11. Footer
+       12. Site Footer
        ------------------------------------------------------------------------- */
     .site-footer {
       border-top: 1px solid var(--border-soft);
       padding: 48px 0 64px 0;
       color: var(--muted);
       font-size: 13.5px;
+      position: relative;
+      z-index: 10;
     }
 
     .footer-content {
       display: flex;
-      justify-content: space-between;
       align-items: center;
+      justify-content: space-between;
       flex-wrap: wrap;
       gap: 20px;
     }
 
     .footer-links {
       display: flex;
-      gap: 20px;
+      gap: 24px;
     }
 
-    .footer-links a {
+    .footer-links a, .portfolio-link {
       color: var(--muted);
       text-decoration: none;
       transition: color 0.2s ease;
     }
 
-    .footer-links a:hover {
+    .footer-links a:hover, .portfolio-link:hover {
       color: #ffffff;
-    }
-
-    .portfolio-link {
-      color: #ffffff;
-      text-decoration: none;
-      border-bottom: 1px dashed var(--border);
-    }
-
-    .portfolio-link:hover {
-      border-bottom-style: solid;
-    }
-
-    /* -------------------------------------------------------------------------
-       12. Entrance Animation & Responsive Breakpoints
-       ------------------------------------------------------------------------- */
-    @keyframes fadeInUp {
-      from {
-        opacity: 0;
-        transform: translateY(18px) scale(0.985);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-      }
-    }
-
-    .animate-in {
-      animation: fadeInUp 0.8s var(--ease-out-expo) forwards;
-      opacity: 1; /* Resting opacity 1 so page is never blank if animation doesn't run */
-    }
-
-    .delay-1 { animation-delay: 0.08s; }
-    .delay-2 { animation-delay: 0.16s; }
-    .delay-3 { animation-delay: 0.24s; }
-    .delay-4 { animation-delay: 0.32s; }
-
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
-        animation: none !important;
-        transition: none !important;
-      }
-    }
-
-    /* Responsive typography & layouts */
-    @media (min-width: 1920px) {
-      .hero-title { font-size: 76px; }
-      .container { max-width: 960px; }
-    }
-
-    @media (min-width: 1600px) and (max-width: 1919px) {
-      .hero-title { font-size: 64px; }
-    }
-
-    @media (min-width: 1280px) and (max-width: 1599px) {
-      .hero-title { font-size: 54px; }
-    }
-
-    @media (min-width: 901px) and (max-width: 1279px) {
-      .hero-title { font-size: 42px; }
-    }
-
-    @media (max-width: 900px) {
-      .hero-title { font-size: 36px; }
-      .site-header { padding: 18px 24px; }
-      .header-nav { display: none; }
-      .header-cta { display: none; }
-      .burger-btn { display: inline-flex; }
-      .how-grid { grid-template-columns: 1fr; }
-      .demo-controls { grid-template-columns: 1fr; }
-      .hero-stats { grid-template-columns: 1fr; gap: 20px; text-align: center; }
-    }
-
-    @media (max-width: 560px) {
-      .hero-buttons { flex-direction: column; width: 100%; }
-      .hero-buttons .btn { width: 100%; }
-      .footer-content { flex-direction: column; align-items: flex-start; }
     }
   </style>
 </head>
 
 <body style="background:#000;color:#fff">
-  <!-- Soft Static CSS Glows & Faint Grid -->
+  <!-- Subtle Grain Texture -->
+  <div class="grain-overlay" aria-hidden="true"></div>
+
+  <!-- Soft Static CSS Glows & Faint Grid (Fixed behind sections) -->
   <div class="bg-scene" aria-hidden="true">
     <div class="bg-glow-top"></div>
     <div class="bg-glow-br"></div>
     <div class="bg-grid"></div>
   </div>
 
-  <!-- Fixed Full-Page Interactive Canvas Background -->
+  <!-- Dynamic Canvas Background Visualising Nearest-Neighbour Search -->
   <canvas id="bg" aria-hidden="true"></canvas>
 
-  <!-- Subtle Grain Texture -->
-  <div class="grain-overlay" aria-hidden="true"></div>
+  <!-- =========================================================================
+       1. Video-Globe Hero Section (.hero)
+       ========================================================================= -->
+  <section class="hero">
+    <!-- Globe Video Background -->
+    <div class="bg" role="img" aria-label="Rotating dot-matrix globe, decorative">
+      <img class="bg-poster" src="https://d2ol7oe51mr4n9.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/82e7eb75-c65f-490a-99b5-f3d1cad54200.webp" alt="" aria-hidden="true" />
 
-  <!-- Mobile Navigation Overlay -->
-  <div id="mobile-nav" class="mobile-overlay" role="dialog" aria-modal="true" aria-label="Mobile Navigation">
-    <button class="mobile-close-btn" id="mobile-close" aria-label="Close menu">&times;</button>
-    <a href="#demo" class="nav-pill mobile-link">Demo</a>
-    <a href="#how" class="nav-pill mobile-link">How it works</a>
-    <a href="#benchmarks" class="nav-pill mobile-link">Benchmarks</a>
-    <a href="/docs" target="_blank" class="nav-pill mobile-link">API Docs</a>
-    <a href="#demo" class="btn btn-solid mobile-link" style="width: 240px; height: 48px; margin-top: 10px;">Try the demo</a>
-  </div>
+      <video id="vid-a" class="bg-video is-active" muted loop playsinline disablepictureinpicture aria-hidden="true" preload="auto" poster="https://d2ol7oe51mr4n9.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/82e7eb75-c65f-490a-99b5-f3d1cad54200.webp">
+        <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260912_104036_bd6924f6-3c8e-417e-8465-6d03c8c2e9e6.mp4" type="video/mp4" />
+      </video>
 
-  <!-- 1. Header (3-Column Grid) -->
-  <header class="site-header">
-    <div class="header-grid">
-      <!-- Left: Logo -->
-      <a href="#" class="header-logo" aria-label="vsearch home">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <video id="vid-b" class="bg-video" muted loop playsinline disablepictureinpicture aria-hidden="true" preload="metadata" poster="https://d2ol7oe51mr4n9.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/82e7eb75-c65f-490a-99b5-f3d1cad54200.webp">
+        <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260912_104036_bd6924f6-3c8e-417e-8465-6d03c8c2e9e6.mp4" type="video/mp4" />
+      </video>
+
+      <canvas id="hero-fallback-canvas" class="hero-canvas-fallback" aria-hidden="true"></canvas>
+    </div>
+
+    <!-- Bottom gradient melting into page -->
+    <div class="hero-bottom-fade" aria-hidden="true"></div>
+
+    <!-- Hero Top Navigation -->
+    <nav class="hero-nav" aria-label="Main Navigation">
+      <a href="#" class="hero-logo" aria-label="vsearch home">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <circle cx="12" cy="12" r="9" stroke="#ffffff" stroke-width="2"/>
           <circle cx="12" cy="12" r="3" fill="#ffffff"/>
           <path d="M12 3V6M12 18V21M3 12H6M18 12H21" stroke="rgba(255,255,255,0.4)" stroke-width="2" stroke-linecap="round"/>
         </svg>
         <span>vsearch</span>
-        <span class="header-logo-suffix">engine</span>
       </a>
 
-      <!-- Center: Nav Pills -->
-      <nav class="header-nav" aria-label="Main navigation">
-        <a href="#demo" class="nav-pill">Demo</a>
-        <a href="#how" class="nav-pill">How it works</a>
-        <a href="#benchmarks" class="nav-pill">Benchmarks</a>
-        <a href="/docs" target="_blank" class="nav-pill">API Docs</a>
-      </nav>
-
-      <!-- Right: CTA Button & Mobile Trigger -->
-      <div class="header-cta">
-        <a href="#demo" class="btn btn-solid">Try the demo</a>
+      <div class="hero-nav-links">
+        <a href="#demo" class="hero-nav-link hero-nav-item hero-item-1">Demo</a>
+        <a href="#how" class="hero-nav-link hero-nav-item hero-item-2">How it works</a>
+        <a href="#benchmarks" class="hero-nav-link hero-nav-item hero-item-3">Benchmarks</a>
+        <a href="/docs" target="_blank" class="hero-nav-link hero-nav-item hero-item-4">API Docs</a>
       </div>
-      <button class="burger-btn" id="burger-toggle" aria-expanded="false" aria-controls="mobile-nav" aria-label="Open menu">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <line x1="3" y1="6" x2="21" y2="6"/>
-          <line x1="3" y1="12" x2="21" y2="12"/>
-          <line x1="3" y1="18" x2="21" y2="18"/>
-        </svg>
-      </button>
-    </div>
-  </header>
 
-  <!-- 2. Hero Section (One Viewport Tall, Bottom-Centered) -->
-  <section class="hero-section">
-    <div class="container animate-in delay-1">
-      <div class="hero-badge">From-scratch HNSW vector search</div>
-      
-      <h1 class="hero-title">
-        <span class="hero-line">Search by <em class="serif-accent">meaning</em>, not</span>
-        <span class="hero-line">by keywords.</span>
-      </h1>
-
-      <p class="hero-lede">
-        vsearch is a vector database built from scratch in Python and C++. It finds the most similar items in milliseconds, with metadata filters.
-      </p>
-
-      <div class="hero-buttons">
-        <a href="#demo" class="btn btn-solid btn-hero">Try the live demo</a>
-        <a href="https://github.com/Rajiv6165/vector-search-engine" target="_blank" rel="noopener" class="btn btn-ghost btn-hero">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+      <div class="hero-actions">
+        <a href="https://github.com/Rajiv6165/vector-search-engine" target="_blank" rel="noopener" class="hero-btn-ghost">GitHub</a>
+        <a href="#demo" class="hero-btn-solid">
+          <span>Try the demo</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
           </svg>
-          View on GitHub
+        </a>
+        <button id="hero-burger-btn" class="hero-burger" aria-expanded="false" aria-controls="hero-burger-dropdown" aria-label="Open menu">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="3" y1="6" x2="21" y2="6"/>
+            <line x1="3" y1="12" x2="21" y2="12"/>
+            <line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Burger Dropdown Panel (Tablet & Mobile) -->
+      <div id="hero-burger-dropdown" class="hero-dropdown" role="menu">
+        <a href="#demo" class="hero-dropdown-link" role="menuitem">Demo</a>
+        <a href="#how" class="hero-dropdown-link" role="menuitem">How it works</a>
+        <a href="#benchmarks" class="hero-dropdown-link" role="menuitem">Benchmarks</a>
+        <a href="/docs" target="_blank" class="hero-dropdown-link" role="menuitem">API Docs</a>
+        <a href="https://github.com/Rajiv6165/vector-search-engine" target="_blank" rel="noopener" class="hero-dropdown-link" role="menuitem">GitHub</a>
+        <a href="#demo" class="hero-dropdown-btn" role="menuitem">
+          <span>Try the demo</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
         </a>
       </div>
+    </nav>
 
-      <div class="hero-stats">
+    <!-- Hero Centered Block -->
+    <div class="hero-body">
+      <div class="hero-scrim" aria-hidden="true"></div>
+
+      <h1 class="hero-h1">
+        <span class="hero-h1-mask"><span class="hero-h1-line hero-line-1">Search by <em>meaning,</em></span></span>
+        <span class="hero-h1-mask"><span class="hero-h1-line hero-line-2">not by keywords.</span></span>
+      </h1>
+
+      <p class="hero-sub">
+        Find the most similar items in milliseconds with a vector database<br class="desktop-br">
+        built from scratch, using HNSW graph search, C++ acceleration<br class="desktop-br">
+        and metadata filters, with exact fallback for very narrow filters.
+      </p>
+
+      <div class="hero-ctas">
+        <a href="#demo" class="btn-hero-primary">
+          <span>Try the live demo</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </a>
+        <a href="https://github.com/Rajiv6165/vector-search-engine" target="_blank" rel="noopener" class="btn-hero-ghost">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+          </svg>
+          <span>View on GitHub</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       2. Stats Band Section
+       ========================================================================= -->
+  <section class="stats-section section-fade">
+    <div class="container">
+      <div class="stats-grid">
         <div class="stat-item">
           <span class="stat-value">20,000</span>
           <span class="stat-desc">demo vectors loaded</span>
         </div>
         <div class="stat-item">
-          <span class="stat-value">&lt; 5 ms</span>
-          <span class="stat-desc">typically under a few ms (server-side)</span>
+          <span class="stat-value">typically a few ms</span>
+          <span class="stat-desc">milliseconds (server-side)</span>
         </div>
         <div class="stat-item">
           <span class="stat-value">96.1–100%</span>
@@ -1147,15 +1680,16 @@
     </div>
   </section>
 
-  <!-- 3. Interactive Demo Section (#demo) -->
-  <section id="demo" class="section">
-    <div class="container animate-in delay-2">
+  <!-- =========================================================================
+       3. Interactive Demo Section (#demo)
+       ========================================================================= -->
+  <section id="demo" class="section section-fade">
+    <div class="container">
       <div class="section-header">
         <h2 class="section-title">Try it</h2>
         <p class="section-subtitle">Pick an item and see its nearest neighbours.</p>
       </div>
 
-      <!-- Demo Alert Box for Server Wake-Up / Errors -->
       <div id="demo-alert" class="demo-alert demo-alert-warning" role="alert" aria-live="polite"></div>
 
       <div class="demo-card">
@@ -1182,7 +1716,7 @@
           </button>
         </div>
 
-        <!-- Telemetry Row -->
+        <!-- Telemetry Row (Server-side + Browser round trip) -->
         <div id="telemetry-box" class="telemetry-row" style="display: none;" aria-live="polite">
           <div class="telemetry-item">
             <span class="telemetry-label">Query node:</span>
@@ -1195,6 +1729,10 @@
           <div class="telemetry-item">
             <span class="telemetry-label">Engine latency (server-side):</span>
             <span id="telemetry-latency" class="telemetry-val">- ms</span>
+          </div>
+          <div class="telemetry-item">
+            <span class="telemetry-label">Round trip from your browser:</span>
+            <span id="telemetry-roundtrip" class="telemetry-val">- ms</span>
           </div>
           <div class="telemetry-item">
             <span class="telemetry-label">Search path:</span>
@@ -1231,9 +1769,53 @@
     </div>
   </section>
 
-  <!-- 4. How It Works Section (#how) -->
-  <section id="how" class="section" style="border-top: 1px solid var(--border-soft);">
-    <div class="container animate-in delay-3">
+  <!-- =========================================================================
+       4. Compare Section (#compare)
+       ========================================================================= -->
+  <section id="compare" class="section section-fade" style="border-top: 1px solid var(--border-soft);">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Keyword search vs search by meaning</h2>
+        <p class="section-subtitle">How vector embeddings match semantic intent rather than literal character overlaps.</p>
+      </div>
+
+      <div class="compare-card">
+        <div class="compare-presets" role="tablist" aria-label="Comparison query examples">
+          <button class="compare-preset-btn is-active" role="tab" aria-selected="true" data-preset="0">"cheap phone"</button>
+          <button class="compare-preset-btn" role="tab" aria-selected="false" data-preset="1">"comfortable shoes for running"</button>
+          <button class="compare-preset-btn" role="tab" aria-selected="false" data-preset="2">"something to keep drinks cold"</button>
+        </div>
+
+        <div class="compare-grid">
+          <div class="compare-col compare-col-kw">
+            <div class="compare-col-header">
+              <span class="compare-col-badge badge-kw">Keyword match</span>
+              <span class="compare-col-sub">Exact lexical token overlap</span>
+            </div>
+            <ul id="compare-kw-list" class="compare-list"></ul>
+          </div>
+
+          <div class="compare-col compare-col-vec">
+            <div class="compare-col-header">
+              <span class="compare-col-badge badge-vec">Vector search</span>
+              <span class="compare-col-sub">Semantic proximity in metric space</span>
+            </div>
+            <ul id="compare-vec-list" class="compare-list"></ul>
+          </div>
+        </div>
+
+        <div class="compare-caption">
+          Illustration with hand-written examples, not live results.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       5. How It Works Section (#how)
+       ========================================================================= -->
+  <section id="how" class="section section-fade" style="border-top: 1px solid var(--border-soft);">
+    <div class="container">
       <div class="section-header">
         <h2 class="section-title">How it works</h2>
         <p class="section-subtitle">A high-performance HNSW vector search pipeline designed from first principles.</p>
@@ -1285,9 +1867,11 @@
     </div>
   </section>
 
-  <!-- 5. Benchmarks Section (#benchmarks) -->
-  <section id="benchmarks" class="section" style="border-top: 1px solid var(--border-soft);">
-    <div class="container animate-in delay-4">
+  <!-- =========================================================================
+       6. Benchmarks Section (#benchmarks)
+       ========================================================================= -->
+  <section id="benchmarks" class="section section-fade" style="border-top: 1px solid var(--border-soft);">
+    <div class="container">
       <div class="section-header">
         <h2 class="section-title">Benchmarks</h2>
         <p class="section-subtitle">Real verified benchmark figures from test suites and SIFT evaluations.</p>
@@ -1325,7 +1909,40 @@
     </div>
   </section>
 
-  <!-- 6. Assistant Widget (Floating Bottom-Right) -->
+  <!-- =========================================================================
+       7. Try the API Section (#api)
+       ========================================================================= -->
+  <section id="api" class="section section-fade" style="border-top: 1px solid var(--border-soft);">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Try the API</h2>
+        <p class="section-subtitle">Query nearest neighbours programmatically using the public demo key.</p>
+      </div>
+
+      <div class="api-card">
+        <div class="api-header">
+          <div class="api-endpoint-badge">GET /similar/{id}?k=5</div>
+          <button id="copy-curl-btn" class="btn-copy" type="button" aria-label="Copy cURL command">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            <span id="copy-btn-text">Copy</span>
+          </button>
+        </div>
+        <pre class="api-code"><code id="curl-code">curl -X GET "https://vsearch.onrender.com/similar/1?k=5" \
+  -H "X-API-Key: {{ PUBLIC_KEY }}"</code></pre>
+        <div class="api-footer">
+          <span class="api-note">Read-only demo key, rate limited.</span>
+          <span id="copy-status" class="copy-status" aria-live="polite"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       8. Floating Assistant Widget (#ast-toggle, #ast-card)
+       ========================================================================= -->
   <button id="ast-toggle" class="assistant-toggle-btn" aria-expanded="false" aria-controls="ast-card" style="display: none;">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
@@ -1345,32 +1962,33 @@
       <button id="ast-close" class="assistant-close" aria-label="Close assistant">&times;</button>
     </div>
 
-    <!-- Suggested questions -->
-    <div class="assistant-suggestions">
+    <div id="ast-messages" class="assistant-messages" aria-live="polite">
+      <div class="chat-bubble chat-assistant">
+        Hello! I'm the vsearch assistant. Ask me anything about how this engine works, HNSW graph search, or the benchmarks.
+      </div>
+    </div>
+
+    <div class="assistant-suggestions" aria-label="Suggested questions">
       <button type="button" class="btn-suggestion" data-q="What does this demo show?">What does this demo show?</button>
       <button type="button" class="btn-suggestion" data-q="What is HNSW?">What is HNSW?</button>
       <button type="button" class="btn-suggestion" data-q="Why are these items similar?">Why are these items similar?</button>
     </div>
 
-    <!-- Message Stream -->
-    <div id="ast-messages" class="assistant-messages" aria-live="polite"></div>
+    <div id="ast-alert" class="demo-alert demo-alert-warning" style="margin: 8px 16px 0 16px; display: none;" role="alert"></div>
 
-    <!-- Alert / Status -->
-    <div id="ast-alert" class="demo-alert demo-alert-danger" style="padding: 8px 12px; margin-bottom: 0;"></div>
-
-    <!-- Input Form -->
     <form id="ast-form" class="assistant-form">
-      <input type="text" id="ast-input" class="assistant-input" placeholder="Ask about vector search or this demo..." maxlength="500" required />
-      <button type="submit" id="ast-btn" class="btn btn-solid assistant-send">Ask</button>
+      <input id="ast-input" type="text" class="assistant-input" placeholder="Ask a question..." maxlength="500" required autocomplete="off" />
+      <button id="ast-btn" type="submit" class="assistant-send-btn">Ask</button>
     </form>
-
-    <div class="assistant-meta">
-      <span id="ast-status"></span>
+    <div id="ast-status" style="font-size: 11px; color: var(--muted); padding: 0 16px 4px 16px; min-height: 16px;"></div>
+    <div class="assistant-footer-note">
       <span>AI answers may be wrong.</span>
     </div>
   </div>
 
-  <!-- 7. Footer -->
+  <!-- =========================================================================
+       9. Footer
+       ========================================================================= -->
   <footer class="site-footer">
     <div class="container footer-content">
       <div class="footer-links">
@@ -1384,16 +2002,13 @@
     </div>
   </footer>
 
-  <!-- -------------------------------------------------------------------------
-       8. Isolated JavaScript Logic (Demo & Assistant)
-       ------------------------------------------------------------------------- -->
+  <!-- =========================================================================
+       Client JavaScript
+       ========================================================================= -->
   <script>
-    // Server-injected values
     const PUBLIC_KEY = "{{ PUBLIC_KEY }}";
-    const HAS_ASSISTANT = "{{ HAS_ASSISTANT }}" === "true";
-    let currentContext = null;
+    const HAS_ASSISTANT = {{ HAS_ASSISTANT }};
 
-    // Build auth headers using injected public read key
     function getHeaders() {
       const headers = { "Content-Type": "application/json" };
       if (PUBLIC_KEY && PUBLIC_KEY.trim() !== "") {
@@ -1403,53 +2018,224 @@
     }
 
     // -------------------------------------------------------------------------
-    // Animation fallback & mobile navigation handlers
+    // Entrance Animation Orchestration
     // -------------------------------------------------------------------------
-    (function initUI() {
-      // Staggered entrance fallback
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          document.querySelectorAll('.animate-in').forEach(el => el.classList.add('is-in'));
+    (function initEntrance() {
+      const docEl = document.documentElement;
+      if (!docEl.classList.contains("anim")) return;
+
+      let hasTriggered = false;
+      function triggerGo() {
+        if (hasTriggered) return;
+        hasTriggered = true;
+        docEl.classList.add("go");
+
+        // Clean up anim/go classes after last animation finishes
+        const safetyTimer = setTimeout(cleanup, 2600);
+        const lastBtn = document.querySelector(".btn-hero-ghost");
+        if (lastBtn) {
+          lastBtn.addEventListener("animationend", () => {
+            clearTimeout(safetyTimer);
+            cleanup();
+          }, { once: true });
+        }
+      }
+
+      function cleanup() {
+        docEl.classList.remove("anim", "go");
+      }
+
+      if (document.fonts && document.fonts.ready) {
+        const ceiling = setTimeout(triggerGo, 900);
+        document.fonts.ready.then(() => {
+          clearTimeout(ceiling);
+          triggerGo();
+        }).catch(triggerGo);
+      } else {
+        setTimeout(triggerGo, 100);
+      }
+    })();
+
+    // -------------------------------------------------------------------------
+    // Video Background Playback & Cross-Fade Loop Controller
+    // -------------------------------------------------------------------------
+    (function initVideoBackground() {
+      const vidA = document.getElementById("vid-a");
+      const vidB = document.getElementById("vid-b");
+      const hero = document.querySelector(".hero");
+      const fallbackCanvas = document.getElementById("hero-fallback-canvas");
+
+      const isReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      const isSaveData = conn && conn.saveData;
+      const isSlowNet = conn && (conn.effectiveType === "2g" || conn.effectiveType === "slow-2g");
+      const isNarrow = window.innerWidth <= 552;
+
+      const skipVideo = isReduced || isSaveData || isSlowNet || isNarrow;
+
+      if (skipVideo) {
+        if (vidA) vidA.remove();
+        if (vidB) vidB.remove();
+        return;
+      }
+
+      let activeVid = vidA;
+      let inactiveVid = vidB;
+      let isFading = false;
+      let isHeroVisible = true;
+      let isTabVisible = !document.hidden;
+
+      function updatePlayback() {
+        const canPlay = isHeroVisible && isTabVisible;
+        if (activeVid) {
+          if (canPlay) {
+            activeVid.play().catch(() => {});
+          } else {
+            activeVid.pause();
+          }
+        }
+        if (inactiveVid && !inactiveVid.paused) {
+          if (!canPlay) inactiveVid.pause();
+        }
+      }
+
+      function onTimeUpdate() {
+        if (!activeVid || isFading) return;
+        const dur = activeVid.duration;
+        if (!dur || isNaN(dur)) return;
+        const rem = dur - activeVid.currentTime;
+        if (rem <= 0.9 && rem > 0) {
+          isFading = true;
+          inactiveVid.currentTime = 0;
+          inactiveVid.play().catch(() => {});
+          inactiveVid.classList.add("is-active");
+          activeVid.classList.remove("is-active");
+
+          setTimeout(() => {
+            activeVid.pause();
+            const tmp = activeVid;
+            activeVid = inactiveVid;
+            inactiveVid = tmp;
+            isFading = false;
+          }, 1000);
+        }
+      }
+
+      function handleError() {
+        if (fallbackCanvas) {
+          fallbackCanvas.classList.add("is-active");
+          initFallbackCanvas();
+        }
+      }
+
+      if (vidA && vidB) {
+        vidA.addEventListener("timeupdate", onTimeUpdate);
+        vidB.addEventListener("timeupdate", onTimeUpdate);
+        vidA.addEventListener("error", handleError);
+        vidB.addEventListener("error", handleError);
+
+        vidA.play().catch(() => {});
+      }
+
+      if (window.IntersectionObserver && hero) {
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach(entry => {
+            isHeroVisible = entry.intersectionRatio >= 0.1;
+            updatePlayback();
+          });
+        }, { threshold: [0, 0.1] });
+        observer.observe(hero);
+      }
+
+      document.addEventListener("visibilitychange", () => {
+        isTabVisible = !document.hidden;
+        updatePlayback();
+      });
+
+      function initFallbackCanvas() {
+        const ctx = fallbackCanvas.getContext("2d");
+        if (!ctx) return;
+        let w = fallbackCanvas.width = hero.clientWidth;
+        let h = fallbackCanvas.height = hero.clientHeight;
+        const dots = [];
+        for (let i = 0; i < 45; i++) {
+          dots.push({
+            x: Math.random() * w,
+            y: Math.random() * h,
+            vx: (Math.random() - 0.5) * 0.4,
+            vy: (Math.random() - 0.5) * 0.4
+          });
+        }
+        function draw() {
+          ctx.clearRect(0, 0, w, h);
+          dots.forEach(d => {
+            d.x += d.vx; d.y += d.vy;
+            if (d.x < 0) d.x = w; if (d.x > w) d.x = 0;
+            if (d.y < 0) d.y = h; if (d.y > h) d.y = 0;
+            ctx.beginPath();
+            ctx.arc(d.x, d.y, 1.2, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(255,255,255,0.3)";
+            ctx.fill();
+          });
+          if (isHeroVisible && isTabVisible) requestAnimationFrame(draw);
+        }
+        draw();
+      }
+    })();
+
+    // -------------------------------------------------------------------------
+    // Hero Burger Navigation
+    // -------------------------------------------------------------------------
+    (function initBurger() {
+      const burger = document.getElementById("hero-burger-btn");
+      const dropdown = document.getElementById("hero-burger-dropdown");
+      if (!burger || !dropdown) return;
+
+      function toggle() {
+        const isOpen = dropdown.classList.contains("is-open");
+        if (isOpen) close();
+        else open();
+      }
+
+      function open() {
+        dropdown.classList.add("is-open");
+        burger.setAttribute("aria-expanded", "true");
+        burger.setAttribute("aria-label", "Close menu");
+      }
+
+      function close() {
+        dropdown.classList.remove("is-open");
+        burger.setAttribute("aria-expanded", "false");
+        burger.setAttribute("aria-label", "Open menu");
+      }
+
+      burger.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggle();
+      });
+
+      dropdown.querySelectorAll("a").forEach(a => {
+        a.addEventListener("click", () => {
+          close();
         });
       });
 
-      // Mobile burger navigation
-      const burger = document.getElementById("burger-toggle");
-      const overlay = document.getElementById("mobile-nav");
-      const closeBtn = document.getElementById("mobile-close");
-
-      function openMenu() {
-        if (!overlay) return;
-        overlay.classList.add("active");
-        if (burger) burger.setAttribute("aria-expanded", "true");
-        document.body.style.overflow = "hidden";
-      }
-
-      function closeMenu() {
-        if (!overlay) return;
-        overlay.classList.remove("active");
-        if (burger) burger.setAttribute("aria-expanded", "false");
-        document.body.style.overflow = "";
-      }
-
-      if (burger) burger.addEventListener("click", openMenu);
-      if (closeBtn) closeBtn.addEventListener("click", closeMenu);
-
-      document.querySelectorAll(".mobile-link").forEach(link => {
-        link.addEventListener("click", closeMenu);
+      document.addEventListener("click", (e) => {
+        if (!dropdown.contains(e.target) && !burger.contains(e.target)) {
+          close();
+        }
       });
 
-      window.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") closeMenu();
-      });
-
-      window.addEventListener("resize", () => {
-        if (window.innerWidth >= 901) closeMenu();
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && dropdown.classList.contains("is-open")) {
+          close();
+          burger.focus();
+        }
       });
     })();
 
     // -------------------------------------------------------------------------
-    // Demo Search Controller (Strict textContent only, no innerHTML)
+    // Interactive Demo Search Controller (Strict textContent only)
     // -------------------------------------------------------------------------
     function showDemoAlert(msg, isError = false) {
       const el = document.getElementById("demo-alert");
@@ -1477,13 +2263,11 @@
       }
       hideDemoAlert();
 
-      // Free host wakeup timer
-      let wakeupTimer = setTimeout(() => {
+      const wakeupTimer = setTimeout(() => {
         showDemoAlert("The free server is waking up, this can take up to a minute");
       }, 4000);
 
       try {
-        // 1. Fetch random node
         let randomUrl = "/demo/random";
         if (category) {
           randomUrl += `?category=${encodeURIComponent(category)}`;
@@ -1493,31 +2277,32 @@
         try {
           resp = await fetch(randomUrl, { headers: getHeaders() });
         } catch (netErr) {
-          showDemoAlert("Unable to reach service. The free server may be waking up from an idle spin-down. Please try again shortly.", true);
+          clearTimeout(wakeupTimer);
+          showDemoAlert("Could not reach server. The free host may be waking up, please wait a moment and retry.", true);
           return;
         }
-
-        clearTimeout(wakeupTimer);
 
         if (resp.status === 401) {
-          showDemoAlert("Authentication error: Public demo key was rejected.", true);
+          clearTimeout(wakeupTimer);
+          showDemoAlert("Authentication error: Public demo key rejected. Reload page or check server key.", true);
           return;
         }
-        if (resp.status === 404) {
-          showDemoAlert("No nodes found for the selected filter.", true);
-          return;
-        }
+
         if (resp.status === 429) {
-          showDemoAlert("Rate limit reached. Please wait a few seconds before searching again.", true);
+          clearTimeout(wakeupTimer);
+          showDemoAlert("Demo rate limit reached. Please wait a minute before querying again.", true);
           return;
         }
+
         if (resp.status === 503) {
-          showDemoAlert("Server is initializing demo vectors. Please wait 10 seconds and try again.");
+          clearTimeout(wakeupTimer);
+          showDemoAlert("Index is initializing demo dataset. Please retry in a few seconds.", false);
           return;
         }
+
         if (!resp.ok) {
-          const errData = await resp.json().catch(() => ({ detail: resp.statusText }));
-          showDemoAlert(`Error fetching random node: ${errData.detail || resp.statusText}`, true);
+          clearTimeout(wakeupTimer);
+          showDemoAlert(`Error fetching random node: HTTP ${resp.status} ${resp.statusText}`, true);
           return;
         }
 
@@ -1525,29 +2310,36 @@
         const nodeId = randomData.node_id;
         const queryMeta = randomData.metadata || {};
 
-        // 2. Fetch similar items
         let similarUrl = `/similar/${nodeId}?k=${k}`;
         if (category) {
           similarUrl += `&category=${encodeURIComponent(category)}`;
         }
 
-        const simResp = await fetch(similarUrl, { headers: getHeaders() });
-        if (simResp.status === 429) {
-          showDemoAlert("Rate limit reached on search. Please wait a moment.", true);
+        // Measure browser round-trip latency
+        const tStart = performance.now();
+        let simResp;
+        try {
+          simResp = await fetch(similarUrl, { headers: getHeaders() });
+        } catch (simNetErr) {
+          clearTimeout(wakeupTimer);
+          showDemoAlert("Network error while searching for nearest neighbors.", true);
           return;
         }
+        const roundTripMs = performance.now() - tStart;
+
+        clearTimeout(wakeupTimer);
+
         if (!simResp.ok) {
-          const errData = await simResp.json().catch(() => ({ detail: simResp.statusText }));
-          showDemoAlert(`Error searching similar items: ${errData.detail || simResp.statusText}`, true);
+          showDemoAlert(`Error searching similar items: HTTP ${simResp.status} ${simResp.statusText}`, true);
           return;
         }
 
         const simData = await simResp.json();
-        renderResults(nodeId, queryMeta, simData);
+        renderResults(nodeId, queryMeta, simData, roundTripMs);
       } catch (err) {
+        clearTimeout(wakeupTimer);
         showDemoAlert(`Unexpected error: ${err.message}`, true);
       } finally {
-        clearTimeout(wakeupTimer);
         if (btn) {
           btn.disabled = false;
           btn.textContent = "Pick random item";
@@ -1555,25 +2347,19 @@
       }
     }
 
-    function renderResults(nodeId, queryMeta, simData) {
-      currentContext = {
-        node_id: nodeId,
-        category: queryMeta.category || null,
-        k: simData.k,
-        latency_ms: simData.latency_ms,
-        search_path: simData.search_path
-      };
-
+    function renderResults(nodeId, queryMeta, simData, roundTripMs) {
       const telemBox = document.getElementById("telemetry-box");
       const telemNode = document.getElementById("telemetry-node");
       const telemCat = document.getElementById("telemetry-cat");
       const telemLat = document.getElementById("telemetry-latency");
+      const telemRoundtrip = document.getElementById("telemetry-roundtrip");
       const telemPath = document.getElementById("telemetry-path");
 
       if (telemBox) telemBox.style.display = "flex";
       if (telemNode) telemNode.textContent = `#${nodeId}`;
       if (telemCat) telemCat.textContent = queryMeta.category || "None";
       if (telemLat) telemLat.textContent = `${simData.latency_ms.toFixed(3)} ms`;
+      if (telemRoundtrip) telemRoundtrip.textContent = `${roundTripMs.toFixed(1)} ms`;
 
       if (telemPath) {
         const isFallback = simData.used_exact_fallback || simData.search_path === "exact_fallback";
@@ -1612,7 +2398,6 @@
 
         const tr = document.createElement("tr");
 
-        // Rank
         const tdRank = document.createElement("td");
         if (isQueryNode) {
           const qSpan = document.createElement("span");
@@ -1624,33 +2409,23 @@
         }
         tr.appendChild(tdRank);
 
-        // Node ID
-        const tdNode = document.createElement("td");
-        tdNode.style.fontWeight = "600";
-        tdNode.textContent = String(item.node_id);
-        tr.appendChild(tdNode);
+        const tdId = document.createElement("td");
+        tdId.textContent = String(item.node_id);
+        tr.appendChild(tdId);
 
-        // Category
         const tdCat = document.createElement("td");
-        const catSpan = document.createElement("span");
-        catSpan.className = "badge-category";
-        catSpan.textContent = cat;
-        tdCat.appendChild(catSpan);
+        tdCat.textContent = cat;
         tr.appendChild(tdCat);
 
-        // Metadata
         const tdMeta = document.createElement("td");
-        tdMeta.style.color = "var(--muted)";
-        tdMeta.style.fontSize = "12.5px";
         tdMeta.textContent = metaEntries;
         tr.appendChild(tdMeta);
 
-        // Distance
         const tdDist = document.createElement("td");
         const distSpan = document.createElement("span");
-        distSpan.className = "dist-tag";
         if (isQueryNode) {
           distSpan.textContent = "0.0000 (query)";
+          distSpan.style.color = "#c4b5fd";
         } else {
           distSpan.textContent = typeof item.distance === "number" ? item.distance.toFixed(4) : String(item.distance);
         }
@@ -1660,6 +2435,133 @@
         tbody.appendChild(tr);
       });
     }
+
+    // -------------------------------------------------------------------------
+    // Compare Presets Controller (#compare)
+    // -------------------------------------------------------------------------
+    (function initCompare() {
+      const COMPARE_PRESETS = [
+        {
+          query: "cheap phone",
+          keyword: ["Cheap phone case", "Phone charger, cheap price"],
+          vector: ["Affordable smartphone", "Budget Android handset", "Low-cost mobile phone"]
+        },
+        {
+          query: "comfortable shoes for running",
+          keyword: ["Comfortable office chair", "Running shorts"],
+          vector: ["Cushioned jogging sneakers", "Lightweight trainers"]
+        },
+        {
+          query: "something to keep drinks cold",
+          keyword: ["Drinks menu holder"],
+          vector: ["Insulated bottle", "Portable cooler"]
+        }
+      ];
+
+      function renderPreset(idx) {
+        const p = COMPARE_PRESETS[idx];
+        if (!p) return;
+
+        const kwList = document.getElementById("compare-kw-list");
+        const vecList = document.getElementById("compare-vec-list");
+        if (!kwList || !vecList) return;
+
+        while (kwList.firstChild) kwList.removeChild(kwList.firstChild);
+        while (vecList.firstChild) vecList.removeChild(vecList.firstChild);
+
+        p.keyword.forEach(item => {
+          const li = document.createElement("li");
+          li.className = "compare-item item-kw";
+          li.textContent = item;
+          kwList.appendChild(li);
+        });
+
+        p.vector.forEach(item => {
+          const li = document.createElement("li");
+          li.className = "compare-item item-vec";
+          li.textContent = item;
+          vecList.appendChild(li);
+        });
+
+        const btns = document.querySelectorAll(".compare-preset-btn");
+        btns.forEach((btn, i) => {
+          const active = (i === idx);
+          btn.classList.toggle("is-active", active);
+          btn.setAttribute("aria-selected", active ? "true" : "false");
+        });
+      }
+
+      let currentIdx = 0;
+      const btns = Array.from(document.querySelectorAll(".compare-preset-btn"));
+
+      btns.forEach((btn, i) => {
+        btn.addEventListener("click", () => {
+          currentIdx = i;
+          renderPreset(i);
+        });
+
+        btn.addEventListener("keydown", (e) => {
+          if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+            e.preventDefault();
+            currentIdx = (currentIdx + 1) % btns.length;
+            btns[currentIdx].focus();
+            renderPreset(currentIdx);
+          } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+            e.preventDefault();
+            currentIdx = (currentIdx - 1 + btns.length) % btns.length;
+            btns[currentIdx].focus();
+            renderPreset(currentIdx);
+          }
+        });
+      });
+
+      renderPreset(0);
+    })();
+
+    // -------------------------------------------------------------------------
+    // Try the API Copy Button Controller
+    // -------------------------------------------------------------------------
+    (function initApiCopy() {
+      const btn = document.getElementById("copy-curl-btn");
+      const btnText = document.getElementById("copy-btn-text");
+      const statusEl = document.getElementById("copy-status");
+      const codeEl = document.getElementById("curl-code");
+
+      if (!btn || !codeEl) return;
+
+      btn.addEventListener("click", async () => {
+        const textToCopy = codeEl.textContent;
+        try {
+          var copied = false;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            try {
+              await navigator.clipboard.writeText(textToCopy);
+              copied = true;
+            } catch (clipErr) {
+              copied = false;
+            }
+          }
+          if (!copied) {
+            const ta = document.createElement("textarea");
+            ta.value = textToCopy;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+          }
+          if (btnText) btnText.textContent = "Copied";
+          if (statusEl) statusEl.textContent = "Copied command to clipboard";
+          setTimeout(() => {
+            if (btnText) btnText.textContent = "Copy";
+            if (statusEl) statusEl.textContent = "";
+          }, 2000);
+        } catch (err) {
+          if (statusEl) statusEl.textContent = "Failed to copy";
+        }
+      });
+    })();
 
     // -------------------------------------------------------------------------
     // Floating Assistant Controller
@@ -1724,13 +2626,24 @@
         messages.scrollTop = messages.scrollHeight;
       }
 
-      async function sendQuestion(rawQ) {
-        const q = (rawQ || "").trim();
+      async function sendQuestion(rawQuestion) {
+        const q = (rawQuestion || "").trim();
         if (!q) return;
+
+        if (q.length > 500) {
+          showAstAlert("Questions are limited to 500 characters.");
+          return;
+        }
 
         hideAstAlert();
         appendAstMessage("user", q);
         if (input) input.value = "";
+
+        const currentContext = {
+          category: document.getElementById("category-select") ? document.getElementById("category-select").value : "",
+          k: document.getElementById("k-input") ? document.getElementById("k-input").value : "10"
+        };
+
         if (input) input.disabled = true;
         if (btn) {
           btn.disabled = true;
@@ -1746,7 +2659,6 @@
           });
 
           if (resp.status === 404 || resp.status === 503) {
-            // Hide widget entirely if service is unavailable or model not found
             if (card) card.classList.remove("active");
             if (toggleBtn) toggleBtn.style.display = "none";
             return;
@@ -1794,7 +2706,7 @@
     })();
 
     // -------------------------------------------------------------------------
-    // Full-Page Background Canvas Animation (Nearest-Neighbour Visualisation)
+    // Background Canvas Animation (Nearest-Neighbour Search Visualisation)
     // -------------------------------------------------------------------------
     (function initBackgroundCanvas() {
       const canvas = document.getElementById("bg");
@@ -1828,8 +2740,8 @@
           y: Math.random() * height,
           vx: Math.cos(angle) * speed,
           vy: Math.sin(angle) * speed,
-          r: 1.0 + Math.random() * 0.8, // radius 1.0 to 1.8
-          alpha: 0.25 + Math.random() * 0.25 // 25% to 50% opacity
+          r: 1.0 + Math.random() * 0.8,
+          alpha: 0.25 + Math.random() * 0.25
         };
       }
 
@@ -1843,7 +2755,6 @@
       }
       initDots();
 
-      // Debounced window resize
       let resizeTimer;
       window.addEventListener("resize", () => {
         clearTimeout(resizeTimer);
@@ -1865,7 +2776,6 @@
         }, 150);
       }, { passive: true });
 
-      // Interactive pointer tracking
       const pointer = {
         x: -1000,
         y: -1000,
@@ -1874,7 +2784,7 @@
       };
 
       window.addEventListener("mousemove", (e) => {
-        if (window.innerWidth <= 900) return; // skip mouse interaction on mobile
+        if (window.innerWidth <= 900) return;
         pointer.x = e.clientX;
         pointer.y = e.clientY;
         pointer.active = true;
@@ -1911,11 +2821,9 @@
 
         const pointerInteractive = pointer.active && (window.innerWidth > 900 || pointer.isTouch);
 
-        // 1. Update dot positions & pointer attraction
         for (let i = 0; i < dots.length; i++) {
           const d = dots[i];
 
-          // Gentle pull toward pointer within 140 px
           if (pointerInteractive) {
             const pdx = pointer.x - d.x;
             const pdy = pointer.y - d.y;
@@ -1927,18 +2835,15 @@
             }
           }
 
-          // Drift
           d.x += d.vx;
           d.y += d.vy;
 
-          // Wrap at edges
           if (d.x < -10) d.x = width + 10;
           else if (d.x > width + 10) d.x = -10;
           if (d.y < -10) d.y = height + 10;
           else if (d.y > height + 10) d.y = -10;
         }
 
-        // 2. Connect each dot to its 3 nearest neighbours within 150 px
         const drawnPairs = new Set();
 
         for (let i = 0; i < dots.length; i++) {
@@ -1976,7 +2881,6 @@
           }
         }
 
-        // 3. Draw dots
         for (let i = 0; i < dots.length; i++) {
           const d = dots[i];
           ctx.beginPath();
@@ -1985,7 +2889,6 @@
           ctx.fill();
         }
 
-        // 4. Pointer live query connections (4 nearest dots to pointer)
         if (pointerInteractive) {
           const pCandidates = [];
           for (let i = 0; i < dots.length; i++) {
@@ -2012,7 +2915,6 @@
             ctx.stroke();
           }
 
-          // Small query point indicator at pointer
           ctx.beginPath();
           ctx.arc(pointer.x, pointer.y, 2.2, 0, Math.PI * 2);
           ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
@@ -2020,7 +2922,6 @@
         }
       }
 
-      // Respect prefers-reduced-motion
       const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       let animId = null;
 
@@ -2030,12 +2931,11 @@
       }
 
       if (prefersReducedMotion) {
-        drawFrame(); // Draw exactly one static frame
+        drawFrame();
       } else {
         animId = requestAnimationFrame(loop);
       }
 
-      // Pause when tab is hidden, resume when visible
       document.addEventListener("visibilitychange", () => {
         if (document.hidden) {
           if (animId) {
@@ -2048,6 +2948,23 @@
           }
         }
       });
+    })();
+
+    // -------------------------------------------------------------------------
+    // Section Scroll Intersection Observer (Smooth entrance for sections)
+    // -------------------------------------------------------------------------
+    (function initScrollFade() {
+      if (!window.IntersectionObserver) return;
+      const observer = new IntersectionObserver((entries, obs) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-visible");
+            obs.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.08 });
+
+      document.querySelectorAll(".section-fade").forEach(el => observer.observe(el));
     })();
   </script>
 </body>

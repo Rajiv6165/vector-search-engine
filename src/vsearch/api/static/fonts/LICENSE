@@ -1,8 +1,10 @@
 This directory contains self-hosted web fonts:
 
-- Inter (by Rasmus Andersson): SIL Open Font License, Version 1.1
-  https://github.com/rsms/inter/blob/master/LICENSE.txt
+- Plus Jakarta Sans (by Tokotype, Ghaith Kakish): SIL Open Font License, Version 1.1
+  https://github.com/tokotype/Plus-Jakarta-Sans/blob/master/OFL.txt
 - Instrument Serif (by Rodrigo Fuenzalida, Jordan Engel / Instrument): SIL Open Font License, Version 1.1
   https://github.com/Instrument/Instrument-Serif/blob/main/OFL.txt
+- Inter (by Rasmus Andersson): SIL Open Font License, Version 1.1
+  https://github.com/rsms/inter/blob/master/LICENSE.txt
 
-Both fonts are freely distributable and usable under the SIL Open Font License 1.1.
+All fonts are freely distributable and usable under the SIL Open Font License 1.1.

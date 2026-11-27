@@ -162,6 +162,7 @@ For those who want to go deep into the systems engineering decisions, read throu
 ## Typography & Assets
 
 The web interface uses self-hosted typefaces under the SIL Open Font License 1.1:
-*   [Inter](https://rsms.me/inter/) by Rasmus Andersson (OFL 1.1)
+*   [Plus Jakarta Sans](https://github.com/tokotype/Plus-Jakarta-Sans) by Tokotype (OFL 1.1)
 *   [Instrument Serif](https://instrument.com/) by Rodrigo Fuenzalida & Jordan Engel (OFL 1.1)
+*   [Inter](https://rsms.me/inter/) by Rasmus Andersson (OFL 1.1)
 

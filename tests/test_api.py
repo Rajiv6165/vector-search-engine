@@ -867,8 +867,8 @@ def test_landing_page_and_static_files():
             assert "<table" in content
             assert "Pick random item" in content
 
-            # 2. GET /static/fonts/inter-variable.woff2 returns HTTP 200
-            font_resp = client.get("/static/fonts/inter-variable.woff2")
+            # 2. GET /static/fonts/plus-jakarta-sans-variable.woff2 returns HTTP 200
+            font_resp = client.get("/static/fonts/plus-jakarta-sans-variable.woff2")
             assert font_resp.status_code == 200
             assert len(font_resp.content) > 1000
 

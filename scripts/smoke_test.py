@@ -84,10 +84,10 @@ def run_smoke_test(base_url: str, write_key: Optional[str] = None, read_key: Opt
         all_passed = False
 
     # 2b. Static Assets (Self-hosted Fonts)
-    print("\nChecking GET /static/fonts/inter-variable.woff2 (Self-hosted font)...")
-    code_font, _ = make_request(f"{base}/static/fonts/inter-variable.woff2")
+    print("\nChecking GET /static/fonts/plus-jakarta-sans-variable.woff2 (Self-hosted font)...")
+    code_font, _ = make_request(f"{base}/static/fonts/plus-jakarta-sans-variable.woff2")
     if code_font == 200:
-        print(f"  [PASS] /static/fonts/inter-variable.woff2 returned HTTP 200")
+        print(f"  [PASS] /static/fonts/plus-jakarta-sans-variable.woff2 returned HTTP 200")
     else:
         print(f"  [FAIL] Static font route failed: HTTP {code_font}")
         all_passed = False
